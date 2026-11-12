@@ -1,0 +1,22 @@
+{
+  "name": "@rsva/connector-plane-db",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "rsva-from-plane-db": "./src/export.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts 'test/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@rsva/connector-plane": "workspace:*",
+    "@rsva/editor": "workspace:*",
+    "@rsva/schema": "workspace:*",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

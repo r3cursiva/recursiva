@@ -1,0 +1,1 @@
+ALTER TABLE "workspace" ADD COLUMN "triagers" uuid[] DEFAULT '{}' NOT NULL;

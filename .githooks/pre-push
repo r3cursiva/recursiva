@@ -1,0 +1,35 @@
+#!/bin/sh
+# Runs pnpm check before a push: pull requests have no CI, a run on the Mac replaces it (ADR 0021). core.hooksPath points
+# here, set by the root package's prepare script. `git push --no-verify` skips this, and pnpm release then catches the rest
+# (ADR 0035).
+set -eu
+
+zero=0000000000000000000000000000000000000000
+head=$(git rev-parse HEAD)
+need=""
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_ref" in refs/tags/*) continue ;; esac
+  [ "$local_sha" = "$zero" ] && continue # a deleted branch
+  if [ "$local_sha" != "$head" ]; then
+    echo "pre-push: $local_ref is not this checkout's HEAD, so pnpm check would test other code. Push it from its own worktree." >&2
+    exit 1
+  fi
+  # Nothing reads these files: the same paths the docs-only pull requests skipped.
+  base=$(git merge-base origin/main "$local_sha" 2>/dev/null || echo "")
+  if [ -n "$base" ] && [ -z "$(git diff --name-only "$base" "$local_sha" | grep -vE '^docs/|\.md$' || true)" ]; then continue; fi
+  need=1
+done
+
+[ -n "$need" ] || exit 0
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "pre-push: uncommitted changes would be tested instead of what gets pushed. Commit them or set them aside:" >&2
+  git status --short >&2
+  exit 1
+fi
+
+# Git may pass these to a hook. Left set, the tests that build throwaway repositories would run in this one.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+
+pnpm install --frozen-lockfile --prefer-offline --silent
+pnpm check

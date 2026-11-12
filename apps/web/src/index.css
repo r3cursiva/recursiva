@@ -1,0 +1,190 @@
+@import "@rsva/ui/styles.css";
+/* Rich text (descriptions, comments, the editor). In the startup CSS rather than the edit chunk: as a lazy file it
+   cost one more request for under 1 KB brotli. */
+@import "@rsva/editor/content.css";
+
+/* Classes used by the editor's toolbar (packages/editor), as globals.css does for packages/ui. */
+@source "../../../packages/editor/src";
+
+/* A top comment on a wide pane lights as one band across its row, the avatar and the feed's rule under it included: the
+   avatar's ring takes the band's color. A hovered reply lights alone (its own box, comment-thread.tsx), not its comment. */
+.comment-row {
+  border-radius: 2px;
+  transition: background-color 120ms, box-shadow 120ms;
+}
+@variant md {
+  .comment-row:hover:not(:has(.comment-box .comment-box:hover)) {
+    --feed-ground: var(--color-row-hover);
+    background-color: var(--color-row-hover);
+    box-shadow: 0 0 0 6px var(--color-row-hover);
+  }
+}
+
+/* A comment's actions in it on a wide pane (comment-thread.tsx): shown by hover, the reply's rather than its comment's, by
+   focus in them and while one of their popups is open. Hover may be missing on a tablet: there they stay. */
+.comment-acts {
+  opacity: 0;
+  transform: translateY(2px);
+  pointer-events: none;
+  transition: opacity 120ms, transform 120ms;
+}
+.comment-box:hover:not(:has(.comment-box:hover)) > .comment-acts,
+.comment-acts:focus-within,
+.comment-acts:has([data-popup-open]) {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+@media (pointer: coarse) {
+  .comment-acts {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+}
+
+/* Opening an issue beside its list or board column and closing it (PLNR-56, screens/split-transition.ts). The panes
+   are named only while it runs. The list pane's snapshots are cropped, not stretched, as it narrows or widens: the
+   board folds into its column from the right. The open row or card ("split-item") moves to its new place. */
+:root {
+  --vt-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+:root[data-vt] {
+  --vt-time: 240ms;
+}
+:root[data-vt="close"] {
+  --vt-time: 180ms;
+}
+:root[data-vt] [data-slot="split-list"] {
+  view-transition-name: split-list;
+}
+:root[data-vt] [data-slot="split-detail"] {
+  view-transition-name: split-detail;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+::view-transition-group(*) {
+  animation-duration: var(--vt-time);
+  animation-timing-function: var(--vt-ease);
+}
+/* The moving row or card flies over the issue pane, which comes later in the page. */
+::view-transition-group(split-item) {
+  z-index: 1;
+}
+::view-transition-image-pair(split-list),
+::view-transition-image-pair(split-item) {
+  overflow: clip;
+}
+::view-transition-old(split-list),
+::view-transition-new(split-list),
+::view-transition-old(split-item),
+::view-transition-new(split-item) {
+  width: auto;
+  height: auto;
+  inset: 0 auto auto 0;
+  object-fit: none;
+  animation-duration: var(--vt-time);
+  animation-timing-function: var(--vt-ease);
+}
+::view-transition-old(split-list) {
+  animation: var(--vt-time) var(--vt-ease) both vt-list-out;
+}
+::view-transition-new(split-list) {
+  animation: var(--vt-time) var(--vt-ease) both vt-list-in;
+}
+::view-transition-new(split-detail):only-child {
+  animation: var(--vt-time) var(--vt-ease) both vt-slide-in;
+}
+::view-transition-old(split-detail):only-child {
+  animation: var(--vt-time) var(--vt-ease) both vt-slide-out;
+}
+/* List ↔ board (screens/view-transition.ts): the list pane cross-fades, and the View panel, over the list or beside it,
+   stays on top as it is now. */
+:root[data-vt="layout"] {
+  --vt-time: 200ms;
+}
+:root[data-vt="layout"] [data-slot="view-panel"] {
+  view-transition-name: view-panel;
+}
+:root[data-vt="layout"]::view-transition-old(split-list) {
+  animation: var(--vt-time) var(--vt-ease) both vt-fade-out;
+}
+:root[data-vt="layout"]::view-transition-new(split-list) {
+  animation: var(--vt-time) var(--vt-ease) both vt-fade-in;
+}
+::view-transition-old(view-panel) {
+  display: none;
+}
+::view-transition-new(view-panel) {
+  animation: none;
+}
+/* The View panel comes in as the issue pane does, as a plain animation: it lies over the page, which stays live under it
+   (view-panel-state.ts). Not the pane's way out: that one stays opaque for 60 % behind the moving list, and here, with
+   nothing over it, the panel would stop and then vanish. Its move and fade run together and speed up to the end, and it
+   holds its last frame until it is taken away. */
+[data-slot="view-panel"] {
+  animation: vt-slide-in 240ms var(--vt-ease);
+}
+/* Its width, and on a wide screen the place the screen gives up for it (App.tsx). */
+:root {
+  --view-panel-width: 400px;
+}
+[data-slot="view-panel"][data-leaving] {
+  animation: view-panel-out 180ms ease-in forwards;
+}
+@keyframes view-panel-out {
+  to {
+    opacity: 0;
+    translate: 48px 0;
+  }
+}
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+/* The two list snapshots overlap only briefly: the old one is gone by 60 %, the new one shows from 20 %. */
+@keyframes vt-list-out {
+  60% {
+    opacity: 0;
+  }
+  to {
+    opacity: 0;
+    translate: var(--vt-dx) var(--vt-dy);
+  }
+}
+@keyframes vt-list-in {
+  from {
+    opacity: 0;
+    translate: calc(-1 * var(--vt-dx)) calc(-1 * var(--vt-dy));
+  }
+  20% {
+    opacity: 0;
+  }
+}
+/* The issue pane is opaque by 40 % of its way, so what it covers does not show through for long. */
+@keyframes vt-slide-in {
+  from {
+    opacity: 0;
+    translate: 48px 0;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@keyframes vt-slide-out {
+  60% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    translate: 48px 0;
+  }
+}

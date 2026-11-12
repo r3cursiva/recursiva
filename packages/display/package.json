@@ -1,0 +1,25 @@
+{
+  "name": "@rsva/display",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "exports": {
+    "./themes.css": "./src/themes.css",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts 'test/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@rsva/protocol": "workspace:*",
+    "@rsva/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

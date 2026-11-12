@@ -1,0 +1,64 @@
+name: Perf
+
+# Speed and size of each commit on main: a report. It can go red and nothing waits for it; pnpm release prints its result
+# in one line (ADR 0023), on GitHub-hosted runners (ADR 0056). `pnpm perf:net --update` takes the byte baseline from its last run.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # In a container: the browsers come with the image, and 127.0.0.1 is the container's own. The tag follows `playwright`
+    # in tools/perf/package.json.
+    container: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+    services:
+      # The build prod runs, as in ci.yml.
+      db:
+        image: mirror.gcr.io/library/postgres:18.6@sha256:bc8d7bdd54dc38115ef954fef07f30a96bb2b5b080effa692e0093f03eabac8f
+        env:
+          POSTGRES_USER: rsva
+          POSTGRES_PASSWORD: rsva
+          POSTGRES_DB: rsva
+        options: >-
+          --health-cmd "pg_isready -U rsva"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://rsva:rsva@db:5432/rsva
+      # The workspace perf:net opens and edits: synthetic, the shape of ours (tools/fixtures, preset sample).
+      PERF_WS: sample
+      # A timing over budget warns: a shared runner swings past one with no change in the code.
+      PERF_TIMINGS: warn
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The container's user does not own the mounted workspace; git refuses it without this.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/setup
+      - run: pnpm build
+      # Data for the checks: the sample fixture imported into the database (migrations run on import).
+      - run: |
+          node tools/fixtures/src/cli.ts sample --slug "$PERF_WS" --out "$RUNNER_TEMP/sample.ndjson"
+          node apps/server/src/cli/import.ts "$RUNNER_TEMP/sample.ndjson"
+      # Nothing to do while the image's tag matches; a newer Playwright downloads its browser here.
+      - run: pnpm --filter @rsva/perf exec playwright install chromium-headless-shell
+      # Startup on the owner's network profile (280 ms, 120 KB/s): time against the budget, bytes against the baseline.
+      - run: pnpm perf:net
+      # The description editor: mount of a 50 KB document and keystroke latency at CPU x4 (normalized like perf:net).
+      - if: ${{ !cancelled() }}
+        run: pnpm perf:editor
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: perf
+          path: perf/out/

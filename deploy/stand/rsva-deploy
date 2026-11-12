@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# /usr/local/sbin/rsva-deploy: switches recursiva production on this host to an image already loaded on this host (docs/stand-rsva.md).
+#   rsva-deploy <tag>      run rsva:<tag>; on failure the previous tag comes back by itself
+#   rsva-deploy --rollback the previous tag (rsva.env.prev)
+#   rsva-deploy --status   the tag in use and the server's health
+# Only the compose project "rsva" is touched. Migrations run when the server starts (additive only).
+# After a switch that held, older images go: the newest $KEEP stay, and the live and previous tags always do.
+set -euo pipefail
+cd /opt/rsva
+ENV=rsva.env
+compose() { docker compose -p rsva --env-file "$ENV" "$@"; }
+KEEP=5
+tag_of() { sed -n 's/^RSVA_TAG=//p' "$1"; }
+healthy() {
+  for _ in $(seq 1 60); do
+    curl -fsS --max-time 2 http://127.0.0.1:3820/healthz >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+# Nothing else removes them: one image per release, 38 on 2026-11-03 (PLNR-218). A failure here leaves them, nothing more.
+prune() {
+  local live prev t
+  live=$(tag_of "$ENV")
+  prev=$(tag_of "$ENV.prev" 2>/dev/null || true)
+  TZ=UTC docker images rsva --format '{{.CreatedAt}} {{.Tag}}' | sort -r | awk '{print $NF}' | grep -E '^[0-9a-f]{7,12}$' |
+    tail -n +$((KEEP + 1)) | while read -r t; do
+      [[ $t == "$live" || $t == "$prev" ]] && continue
+      docker image rm "rsva:$t" >/dev/null && echo "removed rsva:$t"
+    done
+}
+switch() {
+  local tag=$1
+  [[ $tag =~ ^[0-9a-f]{7,12}$ ]] || { echo "bad tag: $tag" >&2; exit 2; }
+  docker image inspect "rsva:$tag" >/dev/null 2>&1 || { echo "rsva:$tag is not loaded here (docker load first)" >&2; exit 2; }
+  cp -p "$ENV" "$ENV.prev"
+  sed -i "s/^RSVA_TAG=.*/RSVA_TAG=$tag/" "$ENV"
+  compose up -d app
+  if healthy; then
+    echo "rsva:$tag is up"
+    prune || echo "old images were not removed" >&2
+  else
+    echo "rsva:$tag did not become healthy; back to $(tag_of "$ENV.prev")" >&2
+    cp -p "$ENV.prev" "$ENV"
+    compose up -d app
+    healthy && echo "rolled back" >&2
+    exit 1
+  fi
+}
+case "${1:-}" in
+  --status) echo "tag $(tag_of "$ENV"), previous $(tag_of "$ENV.prev" 2>/dev/null || echo none)"; curl -fsS http://127.0.0.1:3820/healthz; echo ;;
+  --rollback) [[ -f "$ENV.prev" ]] || { echo "no previous tag" >&2; exit 2; }; switch "$(tag_of "$ENV.prev")" ;;
+  "" | -*) echo "usage: rsva-deploy <tag> | --rollback | --status" >&2; exit 2 ;;
+  *) switch "$1" ;;
+esac

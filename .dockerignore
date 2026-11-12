@@ -1,0 +1,6 @@
+# The stand image takes built files only (deploy/stand/Dockerfile).
+*
+!apps/server/dist/main.js
+!apps/server/dist/*-cli.js
+!apps/web/dist
+!packages/schema/migrations

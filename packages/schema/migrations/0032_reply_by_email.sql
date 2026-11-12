@@ -1,0 +1,2 @@
+ALTER TABLE "notify_outbox" ADD COLUMN "reply_hash" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "notify_outbox_reply_hash_index" ON "notify_outbox" USING btree ("reply_hash") WHERE "notify_outbox"."reply_hash" is not null;

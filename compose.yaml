@@ -1,0 +1,25 @@
+# Local development: the planner's own database, separate from the shared Postgres on the Mac.
+# docker compose up -d db
+# Named, not taken from the folder: a renamed folder would otherwise start an empty database (PLNR-318).
+name: rsva
+services:
+  db:
+    # The build prod runs (deploy/stand/compose.yaml), as in CI: a tag alone is rebuilt under the same name.
+    image: postgres:18.6@sha256:bc8d7bdd54dc38115ef954fef07f30a96bb2b5b080effa692e0093f03eabac8f
+    # Back by itself after Docker or the Mac restarts; `docker compose stop` still keeps it down.
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rsva
+      POSTGRES_PASSWORD: rsva
+      POSTGRES_DB: rsva
+    ports:
+      - "127.0.0.1:5438:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "rsva"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+volumes:
+  pgdata:

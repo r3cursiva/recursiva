@@ -1,0 +1,13 @@
+#!/bin/sh
+# A new worktree gets a `docs` link to the main working copy's docs/: the maintainers' private documents are a separate
+# repository cloned there, so a worktree does not have them (RSVA-591). Does nothing without such a docs/ (a contributor's
+# copy), in a detached worktree (a release build), or when the worktree already has docs.
+set -eu
+
+zero=0000000000000000000000000000000000000000
+[ "$1" = "$zero" ] || exit 0 # only the first checkout of a worktree
+git symbolic-ref -q HEAD >/dev/null || exit 0
+main=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+[ "$main" != "$(git rev-parse --show-toplevel)" ] || exit 0
+[ -d "$main/docs" ] && [ ! -e docs ] && ln -s "$main/docs" docs
+exit 0

@@ -1,0 +1,29 @@
+{
+  "name": "@rsva/tui",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "bin": {
+    "rsva-tui": "./bin/rsva-tui.js"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@rsva/display": "workspace:*",
+    "@rsva/editor": "workspace:*",
+    "@rsva/policy": "workspace:*",
+    "@rsva/protocol": "workspace:*",
+    "@rsva/query": "workspace:*",
+    "@rsva/schema": "workspace:*",
+    "@rsva/sync": "workspace:*",
+    "@rsva/terminal": "workspace:*",
+    "mobx": "7.0.6"
+  },
+  "devDependencies": {
+    "@rsva/test-kit": "workspace:*",
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

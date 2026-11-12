@@ -1,0 +1,18 @@
+{
+  "name": "@rsva/policy",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts 'test/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

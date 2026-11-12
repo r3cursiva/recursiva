@@ -1,0 +1,44 @@
+{
+  "name": "rsva",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=24.11"
+  },
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true && pnpm cn:tables",
+    "cn:tables": "cn build -q --css packages/ui/src/styles/globals.css --content \"apps/web/src/**/*.{ts,tsx}\" --content \"packages/*/src/**/*.{ts,tsx}\" -o packages/ui/src/lib/cn-tables.ts",
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "check": "pnpm typecheck && pnpm check:dupes && pnpm check:copies && pnpm check:dead && pnpm test && pnpm build && pnpm perf:bundle",
+    "check:dupes": "jscpd",
+    "check:dead": "knip",
+    "check:copies": "node tools/copies/src/cli.ts",
+    "sync:lab": "node tools/sync-lab/src/cli.ts",
+    "sync:browser": "node tools/sync-lab/src/browser.ts",
+    "perf:bundle": "node tools/perf/src/bundle.ts",
+    "perf:net": "node tools/perf/src/net.ts",
+    "perf:editor": "node tools/perf/src/editor.ts",
+    "perf:phone": "node tools/perf/src/phone.ts",
+    "demo:seed": "node tools/perf/src/demo.ts",
+    "demo:shots": "node tools/perf/src/shots.ts",
+    "perf:vs-plane": "node tools/perf/src/vs-plane.ts",
+    "perf:similar": "node tools/perf/src/similar.ts",
+    "perf": "pnpm build && pnpm perf:bundle && pnpm perf:net && pnpm perf:editor",
+    "public:check": "node tools/public/check.ts",
+    "public:tree": "node tools/public/build.ts",
+    "public:internal": "node tools/public/internal.ts",
+    "release": "node tools/release/src/cli.ts",
+    "plane:sync": "node tools/release/src/plane-sync.ts",
+    "dev:ts": "node tools/dev/tailnet.ts"
+  },
+  "devDependencies": {
+    "cn": "0.5.0",
+    "jscpd": "5.4.2",
+    "knip": "6.42.1"
+  }
+}

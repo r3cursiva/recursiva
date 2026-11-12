@@ -1,0 +1,16 @@
+packages:
+  - apps/*
+  - packages/*
+  - tools/*
+  - connectors/*
+
+# Do not install versions younger than a week: protection against hijacked npm releases.
+minimumReleaseAge: 10080
+engineStrict: true
+
+# Dependency install scripts are off unless listed here. esbuild's postinstall only verifies its binary, which comes
+# from a platform package anyway, so it stays off.
+allowBuilds:
+  esbuild: false
+patchedDependencies:
+  postgres@3.4.9: patches/postgres@3.4.9.patch

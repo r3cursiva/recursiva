@@ -1,0 +1,655 @@
+/* Quire Ledger design system (ADR 0008) on top of the shadcn base-mira components (ADR 0005). The Ledger tokens are
+   defined once per theme in @rsva/display themes.css; the shadcn variables the components read are aliases of them. */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/* Mono is set at 400 only: 21 KB instead of 40 KB for the variable file. 500 renders as 400. */
+@import "@fontsource/jetbrains-mono/latin-400.css";
+/* The themes' colors (Ledger, Graphite and the rest): in @rsva/display, so the TUI reads them without React. */
+@import "@rsva/display/themes.css";
+
+/* Onest, self-hosted instead of Google Fonts: no third-party request. Only the three subsets an English interface
+   with Russian and Latin content needs (fontsource's index.css has seven, 162 KB); unicode-range fetches only those
+   in use. Ranges as in @fontsource-variable/onest. */
+@font-face {
+  font-family: "Onest Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../../node_modules/@fontsource-variable/onest/files/onest-cyrillic-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Onest Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../../node_modules/@fontsource-variable/onest/files/onest-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Onest Variable";
+  font-style: normal;
+  /* optional, not swap: without the file at first paint the page stays in the system font instead of switching to
+     Onest a moment later (PLNR-209). It still downloads; the Service Worker precaches it and the next load preloads
+     it from there (apps/web/build/shell.ts), which Chrome needs to use an optional font at all. */
+  font-display: optional;
+  font-weight: 100 900;
+  src: url("../../node_modules/@fontsource-variable/onest/files/onest-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Classes used by the component sources; the app adds its own sources automatically. */
+@source "../";
+
+@custom-variant dark (&:is(.dark *));
+
+/* The phone layout: a narrow window, or a phone on its side, wider than md but too low for the desktop's frame and with
+   a finger for a pointer. Every max-md: and md: class means this; apps/web/src/lib/phone.ts repeats the query. */
+@custom-variant max-md {
+  @media (width < 48rem), (pointer: coarse) and (height < 30rem) {
+    @slot;
+  }
+}
+@custom-variant md (@media (width >= 48rem) and (not ((pointer: coarse) and (height < 30rem))));
+/* Wide enough for the View panel beside the list rather than over it (PLNR-305): with the 240px sidebar and the 400px
+   panel, the list keeps 620px or more. */
+@custom-variant dock (@media (width >= 80rem));
+
+/* The sidebar collapsed to its icons, and what is inside it (screens/sidebar.tsx). */
+@custom-variant strip (&:is([data-strip], [data-strip] *));
+/* The framed window on a wide screen: the blocks on the frame, each a rounded card (the default; `.pane` below). Flat
+   (data-panes, apps/web/src/panes.ts) and a phone have none of its plates. The selector outweighs a plain utility, as
+   a plate's rule has to win over the element's own border and padding. */
+@custom-variant framed {
+  @variant md {
+    :root:not([data-panes="flat"]) & {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: "Onest Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    /* Ledger colors, by their design-system names. The design system's `accent` is `signal` here: shadcn already
+       uses `accent` for hover fills. Its `input` (a field's fill) is `field`: shadcn's `input` is a border. */
+    --color-ground: var(--ql-ground);
+    --color-panel: var(--ql-panel);
+    --color-group: var(--ql-group);
+    --color-row-hover: var(--ql-row-hover);
+    --color-row-selected: var(--ql-row-selected);
+    --color-nav-current: var(--ql-nav-current);
+    --color-rule: var(--ql-rule);
+    --color-rule-soft: var(--ql-rule-soft);
+    --color-rule-strong: var(--ql-rule-strong);
+    /* The window's frame on a wide screen: the ground the blocks (.pane) lie on, darker than they are in every theme so
+       that they rise from it (the theme's rail), and their edge, the soft rule (the Framed* artboards). */
+    --color-frame: var(--ql-rail);
+    --color-frame-line: var(--ql-rule-soft);
+    /* The rail itself, for what sits sunk in a pane as the frame does: a quiet Segmented's group (the artboards' `ql-seg`). */
+    --color-rail: var(--ql-rail);
+    --color-control-border: var(--ql-control-border);
+    --color-ink: var(--ql-ink);
+    --color-ink-2: var(--ql-ink-2);
+    --color-ink-3: var(--ql-ink-3);
+    --color-faint: var(--ql-faint);
+    --color-inverse: var(--ql-inverse);
+    --color-inverse-ink: var(--ql-inverse-ink);
+    --color-kbd-on-inverse: var(--ql-kbd-on-inverse);
+    --color-kbd-ink-on-inverse: var(--ql-kbd-ink-on-inverse);
+    --color-inverse-ink-2: var(--ql-inverse-ink-2);
+    --color-inverse-line: var(--ql-inverse-line);
+    --color-field: var(--ql-field);
+    --color-code: var(--ql-code);
+    --color-signal: var(--ql-signal);
+    --color-signal-ink: var(--ql-signal-ink);
+    --color-signal-text: var(--ql-signal-text);
+    --color-avatar-sand: var(--ql-avatar-sand);
+    --color-avatar-sage: var(--ql-avatar-sage);
+    --color-avatar-mauve: var(--ql-avatar-mauve);
+    --color-avatar-slate: var(--ql-avatar-slate);
+    --color-avatar-clay: var(--ql-avatar-clay);
+    --color-avatar-moss: var(--ql-avatar-moss);
+    --color-avatar-teal: var(--ql-avatar-teal);
+    --color-avatar-iris: var(--ql-avatar-iris);
+    --color-ws-teal: var(--ql-ws-teal);
+    --color-ws-indigo: var(--ql-ws-indigo);
+    --color-ws-umber: var(--ql-ws-umber);
+    --color-ws-slate: var(--ql-ws-slate);
+    --color-ws-ochre: var(--ql-ws-ochre);
+    --color-ws-olive: var(--ql-ws-olive);
+    --color-ws-forest: var(--ql-ws-forest);
+    --color-ws-cobalt: var(--ql-ws-cobalt);
+    --color-ws-plum: var(--ql-ws-plum);
+    --color-ws-rose: var(--ql-ws-rose);
+    /* Status and priority glyphs (Quire Ledger, "Ink for content, color for state"): color lives in the glyph only. */
+    --color-status-backlog: var(--ql-status-backlog);
+    --color-status-todo: var(--ql-status-todo);
+    --color-status-progress: var(--ql-status-progress);
+    --color-status-review: var(--ql-status-review);
+    --color-status-approved: var(--ql-status-approved);
+    --color-status-done: var(--ql-status-done);
+    --color-status-canceled: var(--ql-status-canceled);
+    --color-priority-level: var(--ql-priority-level);
+    /* Feedback, for outcomes only (saved, connected, offline): never a status. */
+    --color-success: var(--ql-success);
+    --color-warning: var(--ql-warning);
+    --color-error: var(--ql-error);
+    --color-error-bg: var(--ql-error-bg);
+    --color-error-line: var(--ql-error-line);
+    --color-error-on-inverse: var(--ql-error-on-inverse);
+    /* A delete button's fill under white text. */
+    --color-danger: var(--ql-danger);
+    --animate-glyph-pop: glyph-pop 300ms var(--ease-spring);
+    --animate-chip-flash: chip-flash 800ms ease-out;
+    --animate-shake: shake 380ms ease;
+    /* The Subscribe bell (PLNR-28): it rings when turned on, hushes when turned off. */
+    --animate-bell-ring: bell-ring 550ms ease;
+    --animate-bell-hush: bell-hush 300ms ease;
+
+    /* shadcn's names, as the components use them. */
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+
+    /* Radii 3 · 4 · 6 · 8: glyphs and hints, tokens and small buttons, controls and cards, popovers and toasts. */
+    --radius-xs: 3px;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 8px;
+    --radius-2xl: 10px;
+    --radius-3xl: 12px;
+    --radius-4xl: 14px;
+
+    /* Hairlines carry structure; only what floats has a shadow. */
+    --shadow-lift: var(--ql-shadow-lift);
+    --shadow-pop: var(--ql-shadow-pop);
+    --shadow-toast: var(--ql-shadow-toast);
+    --shadow-modal: var(--ql-shadow-modal);
+
+    /* Motion: hover tints, and the slightly springy press, lift and fill. */
+    --ease-spring: cubic-bezier(0.3, 0.7, 0.3, 1.3);
+    --ease-bounce: cubic-bezier(0.3, 0.7, 0.3, 1.6);
+
+    @keyframes bell-ring {
+        0% { transform: rotate(0); }
+        20% { transform: rotate(16deg); }
+        40% { transform: rotate(-12deg); }
+        60% { transform: rotate(8deg); }
+        80% { transform: rotate(-4deg); }
+        100% { transform: rotate(0); }
+    }
+    @keyframes bell-hush {
+        40% { transform: scale(0.8); }
+    }
+
+    /* A status glyph that changed pops in (StateIcon); never on first render. */
+    @keyframes chip-flash {
+      from {
+        background: var(--ql-row-selected);
+      }
+      to {
+        background: transparent;
+      }
+    }
+    @keyframes shake {
+      20% {
+        transform: translateX(-6px);
+      }
+      40% {
+        transform: translateX(5px);
+      }
+      60% {
+        transform: translateX(-3px);
+      }
+      80% {
+        transform: translateX(2px);
+      }
+    }
+    @keyframes glyph-pop {
+        from {
+            transform: scale(0.6);
+            opacity: 0.4;
+        }
+    }
+}
+
+/* The type scale (the design system's `type` tokens): Onest for text, JetBrains Mono (font-mono) for IDs and numbers.
+   Theme sizes, so `text-body` sets the size with its line height and tracking, `leading-*` and `tracking-*` still win,
+   and cn (tables built from this file, packages/ui/src/lib/cn-tables.js) knows them for sizes, not colors.
+   On a phone (the artboards' scale) the text sizes step up: read at arm's length, tapped with a finger. The sizes are
+   variables, so a step is set once here. Uppercase eyebrows add tracking-[0.08em]. */
+@theme inline {
+    --text-title-xl: 28px;
+    --text-title-xl--line-height: 1.2;
+    --text-title-xl--letter-spacing: -0.025em;
+    --text-title-lg: 24px;
+    --text-title-lg--line-height: 1.15;
+    --text-title-lg--letter-spacing: -0.02em;
+    --text-title-md: 18px;
+    --text-title-md--line-height: 1.3;
+    --text-title-md--letter-spacing: -0.01em;
+    --text-body-lg: var(--size-body-lg);
+    --text-body-lg--line-height: 1.6;
+    --text-body: var(--size-body);
+    --text-body--line-height: 1.4;
+    --text-label: var(--size-label);
+    --text-label--line-height: 1.4;
+    --text-caption: var(--size-caption);
+    --text-caption--line-height: 1.4;
+    --text-id: 11.5px;
+    --text-id--line-height: 1.4;
+    --text-meta: var(--size-meta);
+    --text-meta--line-height: 1.4;
+    --text-overline: var(--size-overline);
+    --text-overline--line-height: 1.4;
+    /* Roles of the shared components: a size and line height on a desktop and on a phone. A row of a menu, a select or
+       the editor's @ list; on a phone a row of a bottom sheet. */
+    --text-menu: var(--size-menu);
+    --text-menu--line-height: var(--leading-menu);
+}
+:root {
+    --size-body-lg: 14.5px;
+    --size-body: 13px;
+    --size-label: 12.5px;
+    --size-caption: 12px;
+    --size-meta: 11px;
+    --size-overline: 10.5px;
+    --size-menu: 12px;
+    --leading-menu: calc(16px + var(--air));
+    @variant max-md {
+        --size-body-lg: 15px;
+        --size-body: 14px;
+        --size-label: 13.5px;
+        --size-caption: 13px;
+        --size-meta: 11.5px;
+        --size-overline: 11px;
+        --size-menu: 15px;
+        --leading-menu: 1.3;
+    }
+}
+/* Rich text: descriptions and comments, read and edited (packages/editor content.css reads --rich-*). A component names
+   the role of its text; the numbers are here. The root holds an edited description and the composer: on a phone 16px,
+   under which iOS zooms into the field. --rich-gap is the space between paragraphs, list items' blocks and quotes. */
+:root {
+    --rich-size: 13.5px;
+    --rich-leading: 1.55;
+    --rich-gap: 8px;
+    @variant max-md {
+        --rich-size: 16px;
+        --rich-leading: 1.5;
+    }
+}
+/* The description on the issue's page and panel. */
+@utility rich-description {
+    @variant max-md {
+        --rich-size: 15px;
+    }
+}
+/* The description in the new-issue dialog. */
+@utility rich-new-description {
+    @variant md {
+        --rich-size: 14px;
+        --rich-leading: 1.6;
+    }
+}
+/* A comment, and a reply in its thread. */
+@utility rich-comment {
+    --rich-size: 13.5px;
+    --rich-leading: 1.6;
+    @variant max-md {
+        --rich-size: 14.5px;
+        --rich-leading: 1.55;
+    }
+}
+@utility rich-reply {
+    --rich-size: 13px;
+    --rich-leading: 1.6;
+    @variant max-md {
+        --rich-size: 14px;
+    }
+}
+/* A small mono label in capitals over a group of rows or fields: a section of settings, a table's column heads. */
+@utility eyebrow {
+  @apply font-mono text-overline tracking-[0.08em] text-ink-3 uppercase;
+}
+
+/* A link lights up with a row's hover background and keeps its text; nothing is underlined. `link-plate` is a link in a
+   line of text: its margins cancel its padding, so the line doesn't move. */
+@utility link-plate {
+  @apply -mx-1 rounded-[5px] px-1 outline-none transition-colors duration-120 hover:bg-row-hover focus-visible:ring-2 focus-visible:ring-ring;
+}
+
+/* A ruled row of a panel holding a link: the background is a layer of its own, rounded and wider than the row as a pull
+   request's row is, so the row's rule stays straight. The link keeps `outline-none`: the focus ring is drawn here. */
+@utility row-plate {
+  position: relative;
+  isolation: isolate;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 1px -8px;
+    z-index: -1;
+    border-radius: var(--radius-md);
+    transition: background-color 120ms;
+  }
+
+  @variant hover {
+    &::before {
+      background-color: var(--color-row-hover);
+    }
+  }
+
+  &:has(a:focus-visible)::before {
+    box-shadow: 0 0 0 2px var(--color-ring);
+  }
+}
+
+/* Segmented's thumb sits on the chosen option by anchor positioning, so it slides to an option of any width with no
+   script; each `segmented` group scopes the anchor to itself. Compared (PLNR-235, docs/research/segmented-thumb-2026-11-04.md):
+   the option's index times a fixed width (equal options only) and a ResizeObserver per group (a script). Where the thumb
+   cannot be anchored it is hidden and the chosen option fills itself (segmented.tsx). */
+@utility segmented {
+  anchor-scope: --segmented;
+
+  & > [data-checked] {
+    anchor-name: --segmented;
+  }
+}
+
+@utility segmented-thumb {
+  position: absolute;
+  position-anchor: --segmented;
+  top: anchor(top);
+  left: anchor(left);
+  width: anchor-size(width);
+  height: anchor-size(height);
+  transition: left 300ms var(--ease-spring), width 300ms var(--ease-spring);
+
+  @supports not (anchor-scope: --a) {
+    display: none;
+  }
+}
+
+
+/* A block of the window on a wide screen: the sidebar, the screen beside it, each pane of a split. It lies on the frame
+   (App.tsx) with a gap around it, its corners rounded and its edge drawn, as a browser frames a page. A block that holds
+   blocks gives way to them: no ground, edge or corners of its own. On a phone the screen is one sheet.
+   Flat (data-panes, the person's choice, apps/web/src/panes.ts): the blocks side by side, the frame showing only as a
+   1px line between them in the color of a rule, as the window was before frames. */
+:root {
+  --pane-frame: var(--color-frame);
+  /* The one number for the gap between the blocks and around them. */
+  --pane-gap: 8px;
+  --pane-inset: var(--pane-gap);
+  --pane-edge: 1px;
+  --pane-radius: var(--radius-3xl);
+  /* What floats over the window (menus, popovers, dialogs, the palette, toasts), the blocks in a page (the comment box,
+     cycles, settings' lists and cards) and the board's cards follow the panes: rounded with them, nearly square in the
+     flat window. */
+  --float-radius: var(--radius-2xl);
+  --card-radius: var(--radius-md);
+}
+:root[data-density="comfortable"] {
+  @variant md {
+    --air: 4px;
+  }
+}
+:root[data-panes="flat"] {
+  --pane-frame: var(--color-rule);
+  --pane-gap: 1px;
+  --pane-inset: 0px;
+  --pane-edge: 0px;
+  --pane-radius: 0px;
+  @variant md {
+    --float-radius: var(--radius-sm);
+    --card-radius: var(--radius-xs);
+  }
+}
+@layer components {
+  .pane {
+    @variant md {
+      border: var(--pane-edge) solid var(--color-frame-line);
+      border-radius: var(--pane-radius);
+      background-color: var(--color-ground);
+      overflow: clip;
+      &:has(.pane) {
+        border: 0;
+        border-radius: 0;
+        background-color: transparent;
+        overflow: visible;
+      }
+    }
+  }
+}
+/* The framed window's plates; flat, none of this (the `framed` variant). A list's row (issues, My work, Inbox, Views):
+   flat, a band across the pane with a line under each row; framed, no line runs under it, and its hover and selection
+   are a rounded plate inset from the pane's sides. The plate is the row clipped, so nothing in it moves. */
+@utility list-row {
+  @apply border-b border-rule-soft;
+  @variant framed {
+    clip-path: inset(0 6px round var(--card-radius));
+    border-bottom-color: transparent;
+  }
+}
+/* A list in groups (issues, My work, Views, All projects' table): framed, each group a card on the pane after the Framed*
+   artboards. The card is the plate, its head on the card's own ground with a line under it, and a row's hover and
+   selection a band across the card; a table's rows have no line under them, as a list's rows. */
+@utility list-group {
+  @variant framed {
+    margin: 8px 8px 0;
+    border: 1px solid var(--color-rule-soft);
+    border-radius: var(--float-radius);
+    background-color: var(--color-panel);
+    overflow: clip;
+    &:last-child {
+      margin-bottom: 8px;
+    }
+    & [data-group-head] {
+      background-color: var(--color-panel);
+    }
+    & .list-row {
+      clip-path: none;
+    }
+    & td {
+      border-bottom-color: transparent;
+    }
+  }
+}
+/* A tab in a row of tabs (a project's pages and views, the inbox's filters): framed, the Framed* artboards' tab, a 28px
+   plate, the open one on the panel inside a rule, no line under it; flat, the line under the open one. */
+@utility tab-plate {
+  @variant framed {
+    height: 28px;
+    align-self: center;
+    padding-inline: 10px;
+    border-radius: 7px;
+    &::after {
+      display: none;
+    }
+    &:is([aria-selected="true"], [aria-current="page"]) {
+      background-color: var(--color-panel);
+      box-shadow: inset 0 0 0 1px var(--color-rule);
+    }
+  }
+}
+/* While the focus is in the issue pane the keys act there (PLNR-304): the list's cursor steps back to a lighter tint, as
+   the selection of a window that is not in front. A row marked for a bulk action keeps its tint. Unlayered, over the
+   rows' own background utilities. */
+[data-slot="split-view"]:has(> [data-slot="split-detail"]:focus-within) > [data-slot="split-list"]
+  .list-row:is([aria-current], :has(> [aria-selected="true"])):not(:has(input:checked)) {
+  background-color: color-mix(in oklab, var(--color-row-selected) 40%, transparent);
+}
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-body text-foreground;
+  }
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+  /* A touch screen: no grey flash on tap, no double-tap zoom delay, no rubber band around the app's own scrollers. */
+  @media (pointer: coarse) {
+    html {
+      -webkit-tap-highlight-color: transparent;
+      text-size-adjust: 100%;
+    }
+    html, body {
+      overscroll-behavior: none;
+    }
+    a, button, [role="button"], [role="option"], [role="menuitem"] {
+      touch-action: manipulation;
+    }
+    /* Shortcuts are for a keyboard. */
+    kbd {
+      display: none !important;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+    }
+  }
+}
+
+/* A phone on its side keeps every line of height it can: icons alone in a lower tab bar. */
+@media (pointer: coarse) and (height < 30rem) {
+  :root {
+    --tabbar: 44px;
+  }
+  [data-tabbar] a,
+  [data-tabbar] button {
+    font-size: 0;
+    gap: 0;
+  }
+}
+
+/* Every menu, popover and dialog is a bottom sheet on a phone (the artboards' status sheet), with no second component:
+   the primitives carry these classes, which do nothing on a wider screen. Base UI places a popup with inline styles on
+   its positioner, so they are overridden here. --keyboard keeps a sheet above the on-screen keyboard. */
+@variant max-md {
+  /* iOS zooms the page into a field set under 16px; the large ones (a title) are bigger already. */
+  input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [class*="text-lg"], [class*="text-[2"]),
+  textarea:not([class*="text-lg"], [class*="text-[2"]) {
+    font-size: 16px;
+  }
+  .sheet-positioner {
+    position: fixed !important;
+    inset: auto 0 var(--keyboard) 0 !important;
+    transform: none !important;
+    width: auto !important;
+    height: auto !important;
+  }
+  .sheet {
+    position: fixed;
+    inset: auto 0 var(--keyboard) 0 !important;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    max-height: calc(100dvh - var(--keyboard) - var(--safe-top) - 40px) !important;
+    margin: 0;
+    padding: 0 0 calc(10px + var(--safe-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    translate: none !important;
+    transform: none;
+    border-radius: 18px 18px 0 0;
+    background: var(--ql-panel);
+    box-shadow: 0 -10px 40px -12px rgb(0 0 0 / 0.3);
+    --tw-ring-shadow: 0 0 #0000;
+    transform-origin: bottom;
+    font-size: 15px;
+    line-height: 1.4;
+  }
+  .sheet-positioner .sheet {
+    position: relative;
+    inset: auto !important;
+  }
+  /* The grabber: it stays in view while a long sheet scrolls under it. */
+  .sheet::before {
+    content: "";
+    position: sticky;
+    top: 8px;
+    z-index: 2;
+    flex: none;
+    align-self: center;
+    width: 36px;
+    height: 5px;
+    margin: 8px 0 10px;
+    border-radius: 3px;
+    background: var(--ql-rule-strong);
+  }
+  .sheet[data-open],
+  .sheet[data-starting-style] {
+    animation: sheet-in 320ms cubic-bezier(0.2, 0.9, 0.25, 1) both !important;
+  }
+  .sheet[data-closed] {
+    animation: sheet-out 220ms cubic-bezier(0.5, 0, 0.8, 0.4) both !important;
+  }
+  /* Free text in a sheet keeps its margins; lists run to the edges. */
+  .sheet:is([data-slot="dialog-content"]:not(.p-0), [data-slot="popover-content"]) {
+    gap: 14px;
+    padding-inline: 18px;
+  }
+  .sheet:is([data-slot="dialog-content"]:not(.p-0), [data-slot="popover-content"])::before {
+    margin-bottom: 0;
+  }
+  /* Moved by a finger (screens/sheet-drag.ts): no animation under it. */
+  .sheet[data-dragging] {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes sheet-out {
+  from {
+    transform: translateY(var(--drag, 0));
+  }
+  to {
+    transform: translateY(100%);
+  }
+}

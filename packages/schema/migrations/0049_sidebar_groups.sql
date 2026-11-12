@@ -1,0 +1,1 @@
+ALTER TABLE "project_order" ADD COLUMN "groups" jsonb DEFAULT '{}'::jsonb NOT NULL;

@@ -1,0 +1,29 @@
+{
+  "name": "@rsva/terminal",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./client": "./src/client.ts",
+    "./copies": "./src/copies.ts",
+    "./issues": "./src/issues.ts",
+    "./keychain": "./src/keychain.ts",
+    "./markdown": "./src/markdown.ts",
+    "./open": "./src/open.ts",
+    "./programs": "./src/programs.ts",
+    "./text": "./src/text.ts",
+    "./width": "./src/width.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts 'test/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@rsva/protocol": "workspace:*",
+    "@rsva/query": "workspace:*",
+    "@rsva/schema": "workspace:*",
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

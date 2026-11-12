@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#fbfaf7" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="recursiva" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>recursiva</title>
+    <link rel="icon" href="/icon-32.png" sizes="32x32" type="image/png" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Cstyle%3Epath{stroke:%2318181b}@media(prefers-color-scheme:dark){path{stroke:%23f6f5f1}}%3C/style%3E%3Cpath d='M15 15h22v22H15v44h22V59h22v22h22V37H59V15h11' fill='none' stroke-width='10'/%3E%3Crect x='74' y='8' width='14' height='14' fill='%23d9461c'/%3E%3C/svg%3E" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <script>
+      // The theme before the first paint, so it never flashes another one: the choice src/theme.ts saved (which also
+      // follows system changes) with each side's panel color for the browser's bars, or the bare mode an older build
+      // saved, else as the system with the default themes.
+      (() => {
+        let t = null;
+        try {
+          t = localStorage.getItem("rsva:theme");
+          t = JSON.parse(t);
+        } catch {}
+        if (!t || typeof t !== "object") t = { mode: t };
+        const dark = t.mode === "dark" || (t.mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        const root = document.documentElement;
+        root.classList.toggle("dark", dark);
+        root.style.colorScheme = dark ? "dark" : "light";
+        const name = dark ? t.dark : t.light;
+        if (name) root.dataset.theme = name;
+        const bar = (t.bar && t.bar[dark ? "dark" : "light"]) || (dark && "#1c1c1a");
+        if (bar) document.querySelector('meta[name="theme-color"]').content = bar;
+        // The panes and the rows' density as src/panes.ts saved them; none saved: the defaults in globals.css.
+        try {
+          const ui = JSON.parse(localStorage.getItem("rsva:ui"));
+          if (ui && ui.panes) root.dataset.panes = ui.panes;
+          if (ui && ui.density) root.dataset.density = ui.density;
+        } catch {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

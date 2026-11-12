@@ -1,0 +1,3 @@
+# Files that change their name in the public tree, `from -> to` (RSVA-589): the public instructions for coding agents are
+# kept next to the owner's CLAUDE.md, which exclude.txt leaves out.
+CLAUDE.public.md -> CLAUDE.md

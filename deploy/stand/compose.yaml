@@ -1,0 +1,93 @@
+# recursiva production on rsva (docs/stand-rsva.md): /opt/rsva/compose.yaml, started only as
+#   cd /opt/rsva && docker compose -p rsva --env-file rsva.env up -d
+# rsva.env (0600) holds RSVA_TAG, DB_PASSWORD and the server's settings (RESEND_API_KEY, RSVA_*). Compose reads it for
+# interpolation only: the app gets just the variables listed under `environment`, not DB_PASSWORD or RSVA_TAG.
+# Caddy on the same host serves https://app.rsva.dev and proxies to 127.0.0.1:3820. Docker's published ports bypass ufw,
+# so the port stays on loopback; on the host only root and caddy may reach it (/etc/rsva-port-guard.nft).
+x-logs: &logs
+  # rsva has no daemon.json: the default json-file driver would grow without a limit.
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:18.6@sha256:bc8d7bdd54dc38115ef954fef07f30a96bb2b5b080effa692e0093f03eabac8f
+    restart: unless-stopped
+    # Not the image's 999: on rsva that is caddy, which could read the password from /proc.
+    user: "3821:3821"
+    # No swap on rsva: without a limit the OOM killer would choose among the sites.
+    mem_limit: 512m
+    logging: *logs
+    environment:
+      POSTGRES_USER: rsva
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?}
+      POSTGRES_DB: rsva
+    # A bind mount, not a volume: a cleanup of dangling volumes cannot take it.
+    volumes:
+      - ./data/db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "rsva"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  app:
+    image: rsva:${RSVA_TAG:?}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rsva:${DB_PASSWORD:?}@db:5432/rsva
+      RESEND_API_KEY: ${RESEND_API_KEY:?}
+      RSVA_MAIL_FROM: ${RSVA_MAIL_FROM:?}
+      RSVA_ALLOWED_HOSTS: ${RSVA_ALLOWED_HOSTS:?}
+      RSVA_ALLOWED_ORIGINS: ${RSVA_ALLOWED_ORIGINS:?}
+      RSVA_TRUST_PROXY: ${RSVA_TRUST_PROXY:?}
+      # Who may create workspaces (comma-separated addresses); unset means nobody (PLNR-32).
+      RSVA_WORKSPACE_CREATORS: ${RSVA_WORKSPACE_CREATORS:-}
+      # The landing's origin, the one page that may call /api/waitlist (ADR 0054); unset, it gets 403.
+      RSVA_WAITLIST_ORIGINS: ${RSVA_WAITLIST_ORIGINS:-}
+      # Notifications by email (ADR 0027): on only where rsva.env says RSVA_NOTIFY=on.
+      RSVA_NOTIFY: ${RSVA_NOTIFY:-off}
+      RSVA_FILES_DIR: /data/files
+      # The GitHub integration (ADR 0017); unset leaves it off and Settings › GitHub lists what is missing.
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      # Telegram notifications (ADR 0029); unset: "not set up on this server". The webhook is registered only with
+      # RSVA_NOTIFY=on.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # Replies by email (ADR 0034): all three or none; unset, notification emails carry no reply address.
+      RSVA_REPLY_DOMAIN: ${RSVA_REPLY_DOMAIN:-}
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      RESEND_RECEIVING_KEY: ${RESEND_RECEIVING_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    # Least privilege (PLNR-32): a uid that is no account on the host, no capabilities (port 3800 needs none), no
+    # setuid gains, and a read-only root: the server writes only uploads, to data/files (its caches are in memory, logs
+    # go to stdout). The limits keep a runaway process from taking the host's memory or forking without end.
+    user: "3820:3820"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    mem_limit: 1g
+    pids_limit: 128
+    logging: *logs
+    volumes:
+      - ./data/files:/data/files
+    ports:
+      - "127.0.0.1:3820:3800"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3800/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  default:
+    ipam:
+      config:
+        # Fixed: RSVA_TRUST_PROXY and /etc/rsva-port-guard.nft name it (docker-proxy connects from the gateway).
+        - subnet: 172.30.20.0/24
+          gateway: 172.30.20.1

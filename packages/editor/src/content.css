@@ -1,0 +1,212 @@
+/* Rich text: the editor (.ProseMirror.rich-text) and the read-only render (render.ts into .rich-text) look the same,
+   so the editor replaces a rendered description without moving the text. Colors are the theme's tokens and the size,
+   line height and paragraph gap are the role the text is in (--rich-*, `rich-comment` and the like): both in
+   packages/ui globals.css. */
+
+.rich-text {
+  font-size: var(--rich-size);
+  line-height: var(--rich-leading);
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+}
+.rich-text.ProseMirror {
+  outline: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  min-height: 1.6em;
+}
+.rich-text > * + *,
+.rich-text li > * + *,
+.rich-text blockquote > * + * {
+  margin-top: var(--rich-gap);
+}
+/* An empty paragraph keeps its line when read, as in the editor. */
+.rich-text p:empty::after {
+  content: "\200b";
+}
+.rich-text h1 { font-size: 1.25rem; line-height: 1.4; font-weight: 600; margin-top: 1.25rem; }
+.rich-text h2 { font-size: 1.0625rem; line-height: 1.45; font-weight: 600; margin-top: 1rem; }
+.rich-text h3 { font-size: 0.9375rem; line-height: 1.5; font-weight: 600; margin-top: 0.75rem; }
+.rich-text > :first-child { margin-top: 0; }
+.rich-text strong { font-weight: 600; }
+.rich-text a {
+  color: var(--ql-signal-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, var(--ql-signal-text), transparent 60%);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.rich-text.ProseMirror a { cursor: text; }
+/* An issue key that names an issue (issue-ref.ts): the key in the link color, no underline, as Linear draws it. A span in
+   the editor, a link in the reader. */
+.rich-text .issue-ref {
+  color: var(--ql-signal-text);
+  text-decoration: none;
+  font-weight: 500;
+}
+.rich-text a.issue-ref:hover { text-decoration: underline; text-decoration-color: currentColor; }
+/* A mention: the name in the signal color on a faint tint, one unit for the caret (an atom in the editor). */
+.rich-text .mention {
+  color: var(--ql-signal-text);
+  background: color-mix(in oklch, var(--ql-signal-text), transparent 90%);
+  border-radius: 3px;
+  padding: 0 0.1875rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.rich-text.ProseMirror .mention.ProseMirror-selectednode { outline: 2px solid var(--ring); outline-offset: 0; }
+.rich-text code {
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+  border-radius: 3px;
+  border: 1px solid var(--ql-control-border);
+  background: var(--ql-panel);
+  padding: 0.0625rem 0.3rem;
+}
+.rich-text pre {
+  overflow-x: auto;
+  border-radius: 6px;
+  background: var(--ql-code);
+  padding: 0.625rem 0.75rem;
+  white-space: pre;
+}
+.rich-text pre code { background: none; border: 0; padding: 0; font-size: 12.5px; }
+.rich-text blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+}
+/* Who a quote quotes: the bold first line Quote in reply writes (render.ts). */
+.rich-text .quote-author {
+  font-size: 11.5px;
+  color: var(--ql-ink-3);
+}
+.rich-text .quote-author strong { font-weight: 400; }
+.rich-text blockquote > .quote-author + * { margin-top: 0; }
+/* A long log in a comment: its first seven lines (CODE_LINES in render.ts), the rest behind a button. */
+.rich-text .code-fold { position: relative; }
+.rich-text .code-fold pre { line-height: 1.6; }
+.rich-text .code-fold[data-cut] pre {
+  max-height: calc(7lh + 0.625rem);
+  overflow: hidden;
+  mask-image: linear-gradient(#000 calc(100% - 2.5rem), transparent);
+}
+.rich-text .code-fold button {
+  all: unset;
+  margin-top: 0.25rem;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--ql-ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--ql-rule-strong);
+  text-underline-offset: 3px;
+}
+.rich-text .code-fold button:hover { color: var(--ql-ink); }
+.rich-text .code-fold button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* A file in a comment. The mark is Phosphor's File, as a mask: this text is drawn without React. */
+.rich-text .file-card {
+  display: inline-grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 9px;
+  align-items: center;
+  max-width: 100%;
+  margin: 0.25rem 0;
+  padding: 8px 10px;
+  border: 1px solid var(--ql-rule);
+  border-radius: 8px;
+  background: var(--ql-panel);
+  color: var(--ql-ink);
+  text-decoration: none;
+  transition: border-color 120ms;
+}
+.rich-text .file-card:hover { border-color: var(--ql-rule-strong); }
+.rich-text .file-card::before {
+  content: "";
+  grid-row: span 2;
+  width: 16px;
+  height: 16px;
+  background: var(--ql-ink-3);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath d='M216.49,79.52l-56-56A12,12,0,0,0,152,20H56A20,20,0,0,0,36,40V216a20,20,0,0,0,20,20H200a20,20,0,0,0,20-20V88A12,12,0,0,0,216.49,79.52ZM160,57l23,23H160ZM60,212V44h76V92a12,12,0,0,0,12,12h48V212Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.rich-text .file-card span:first-of-type { overflow: hidden; font-size: 12.5px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.rich-text .file-card span:last-of-type { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; line-height: 1.3; color: var(--ql-ink-3); }
+/* An image (PLNR-50): a block of its own, never wider than the text, at most a screen tall. */
+.rich-text img {
+  display: block;
+  max-width: 100%;
+  max-height: 80vh;
+  height: auto;
+  margin: 0.5rem 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.rich-text.ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* Where a dropped or pasted file will go while it uploads (view/upload.ts). */
+.rich-text .upload-placeholder {
+  display: block;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.rich-text hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1rem 0;
+}
+.rich-text ul { list-style: disc; padding-left: 1.25rem; }
+.rich-text ol { list-style: decimal; padding-left: 1.5rem; }
+.rich-text ul ul { list-style: circle; }
+.rich-text li { padding-left: 0.125rem; }
+.rich-text li + li { margin-top: 0.125rem; }
+.rich-text li > p { margin: 0; }
+
+/* Checklist: the box sits where a bullet would. */
+.rich-text ul[data-type="taskList"] { list-style: none; padding-left: 0.125rem; }
+.rich-text ul[data-type="taskList"] > li { display: flex; align-items: flex-start; gap: 0.5rem; padding-left: 0; }
+.rich-text ul[data-type="taskList"] > li > input {
+  flex: none;
+  margin-top: 0.3em;
+  width: 0.875rem;
+  height: 0.875rem;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.rich-text ul[data-type="taskList"] > li > input:disabled { cursor: default; opacity: 1; }
+.rich-text ul[data-type="taskList"] > li > div { flex: 1; min-width: 0; margin-top: 0; }
+.rich-text ul[data-type="taskList"] > li[data-checked="true"] > div > p:first-child {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+/* Table (doc.ts): a wide one scrolls inside the text, not the page; the first row is the header. A cell is one line of
+   text that wraps; it never gets narrower than a short word. */
+.rich-text .table-wrap { overflow-x: auto; overscroll-behavior-x: contain; }
+.rich-text table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.rich-text td {
+  min-width: 5rem;
+  max-width: 24rem;
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--border);
+  vertical-align: top;
+  overflow-wrap: break-word;
+}
+.rich-text tr:first-child > td { font-weight: 600; background: var(--muted); }
+.rich-text td[data-align="center"] { text-align: center; }
+.rich-text td[data-align="right"] { text-align: right; }
+.rich-text.ProseMirror td { white-space: pre-wrap; }
+
+/* Placeholder of an empty editor. */
+.rich-text .is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+.rich-text.ProseMirror-focused .is-empty::before { opacity: 0.7; }
+.ProseMirror-hideselection *::selection { background: transparent; }
+.ProseMirror-gapcursor { display: none; }
+

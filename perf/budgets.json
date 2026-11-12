@@ -1,0 +1,16 @@
+{
+  "ratchetPct": 2,
+  "limits": {
+    "bundle.initial.br": 256000,
+    "bundle.initial.zst": 256000,
+    "net.cold.screen.est": 4000,
+    "net.warm.screen": 300,
+    "net.nav": 50,
+    "net.issue": 100,
+    "net.issue.page": 300,
+    "net.agent.edit": 1000,
+    "editor.mount.50k": 50,
+    "editor.keys.p95.x4": 16
+  },
+  "cpuReferenceMs": 43
+}

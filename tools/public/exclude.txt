@@ -1,0 +1,12 @@
+# What the public tree leaves out (RSVA-532, RSVA-533): `git ls-files` minus these lines, one first commit in a new
+# repository. A line ending in / is a folder, any other is a file; # starts a comment. `pnpm public:check` builds the
+# tree from this list and fails on the owner's paths, hosts and mail or a secret found in it.
+
+# Internal documents: Russian ADRs, research, operations. Public docs are written separately (RSVA-535).
+docs/
+# Instructions for the owner's sessions (Russian, with links to their infrastructure).
+CLAUDE.md
+# The list of what to look for names the owner's servers, so it stays out of the tree it checks.
+tools/public/forbidden.txt
+# The switch-over runbook names the private repositories and the owner's steps: not for the public tree.
+tools/public/switch.md

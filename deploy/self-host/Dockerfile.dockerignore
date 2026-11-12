@@ -1,0 +1,10 @@
+# The context of deploy/self-host/Dockerfile: the sources, not what a build on this machine left behind.
+.git
+.data
+.env
+**/node_modules
+**/dist
+/perf/out
+/test-results
+/playwright-report
+.claude

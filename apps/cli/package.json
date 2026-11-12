@@ -1,0 +1,22 @@
+{
+  "name": "@rsva/cli",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "bin": {
+    "rsva": "./bin/rsva.js"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@rsva/terminal": "workspace:*"
+  },
+  "devDependencies": {
+    "@rsva/query": "workspace:*",
+    "@rsva/schema": "workspace:*",
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

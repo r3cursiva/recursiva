@@ -1,0 +1,2 @@
+ALTER TABLE "notify_outbox" ADD COLUMN "message_id" bigint;--> statement-breakpoint
+CREATE INDEX "notify_outbox_user_id_message_id_index" ON "notify_outbox" USING btree ("user_id","message_id") WHERE "notify_outbox"."message_id" is not null;

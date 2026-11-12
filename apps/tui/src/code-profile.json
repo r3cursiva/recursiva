@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(pnpm release *)",
+      "Bash(security *)"
+    ]
+  },
+  "env": {
+    "GIT_CONFIG_COUNT": "4",
+    "GIT_CONFIG_KEY_0": "url.https://github.com/.insteadOf",
+    "GIT_CONFIG_VALUE_0": "git@github.com:",
+    "GIT_CONFIG_KEY_1": "credential.https://github.com.helper",
+    "GIT_CONFIG_VALUE_1": "",
+    "GIT_CONFIG_KEY_2": "credential.https://github.com.helper",
+    "GIT_CONFIG_VALUE_2": "!f() { test \"$1\" = get && echo username=x-access-token && echo \"password=$GH_TOKEN\"; }; f",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_KEY_3": "core.excludesFile",
+    "GIT_CONFIG_VALUE_3": "/dev/null"
+  }
+}

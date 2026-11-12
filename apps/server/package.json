@@ -1,0 +1,39 @@
+{
+  "name": "@rsva/server",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "RSVA_MAIL=${RSVA_MAIL:-log} RSVA_DEV_CODE=${RSVA_DEV_CODE-000000} RSVA_WORKSPACE_CREATORS=${RSVA_WORKSPACE_CREATORS-owner@sample.test} RSVA_ALLOWED_HOSTS=rsva.localhost RSVA_ALLOWED_ORIGINS=${RSVA_ALLOWED_ORIGINS:-https://rsva.localhost} node --env-file-if-exists=../../.env --watch src/main.ts",
+    "build": "node build.ts",
+    "start": "node --env-file-if-exists=../../.env --max-semi-space-size=16 dist/main.js",
+    "start:src": "node --max-semi-space-size=16 src/main.ts",
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-concurrency=6 --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts --test-global-setup=src/test/global-setup.ts 'src/**/*.test.ts'",
+    "import": "node src/cli/import.ts",
+    "waitlist": "node src/cli/waitlist.ts",
+    "mail:preview": "node src/mail/preview.ts"
+  },
+  "dependencies": {
+    "@fastify/proxy-addr": "5.1.2",
+    "@rsva/editor": "workspace:*",
+    "@rsva/policy": "workspace:*",
+    "@rsva/protocol": "workspace:*",
+    "@rsva/query": "workspace:*",
+    "@rsva/schema": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "fastify": "5.12.7",
+    "fractional-indexing": "4.0.0",
+    "postgres": "3.4.9",
+    "uqr": "0.1.3",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@rsva/fixtures": "workspace:*",
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.2",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

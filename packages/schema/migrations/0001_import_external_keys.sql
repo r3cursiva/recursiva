@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "label_workspace_id_external_source_external_id_index" ON "label" USING btree ("workspace_id","external_source","external_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "workflow_state_project_id_external_source_external_id_index" ON "workflow_state" USING btree ("project_id","external_source","external_id");

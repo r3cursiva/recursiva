@@ -1,0 +1,29 @@
+{
+  "name": "@rsva/schema",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./db": "./src/db.ts",
+    "./models": "./src/models.ts",
+    "./bundle": "./src/bundle.ts",
+    "./days": "./src/days.ts",
+    "./settings": "./src/settings.ts",
+    "./util": "./src/util.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "generate": "drizzle-kit generate",
+    "test": "node --test --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts 'test/**/*.test.ts'"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.4"
+  },
+  "devDependencies": {
+    "@rsva/policy": "workspace:*",
+    "@types/node": "26.6.5",
+    "drizzle-kit": "0.31.11",
+    "typescript": "7.0.2"
+  }
+}

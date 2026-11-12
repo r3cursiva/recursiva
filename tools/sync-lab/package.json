@@ -1,0 +1,28 @@
+{
+  "name": "@rsva/sync-lab",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "bin": {
+    "rsva-sync-lab": "./src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-force-exit --test-timeout=60000 --import=../../tools/test-watchdog/src/watchdog.ts 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@rsva/fixtures": "workspace:*",
+    "@rsva/query": "workspace:*",
+    "@rsva/schema": "workspace:*",
+    "@rsva/sync": "workspace:*",
+    "@rsva/test-kit": "workspace:*",
+    "fake-indexeddb": "6.2.6",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.2",
+    "playwright": "1.64.1",
+    "typescript": "7.0.2"
+  }
+}

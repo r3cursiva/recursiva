@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.DS_Store
+/perf/out/
+/test-results/
+/playwright-report/
+/.data/
+# cn's merge tables, built from the theme by `pnpm cn:tables` and the Vite plugin.
+/packages/ui/src/lib/cn-tables.ts
+# Local secrets (RESEND_API_KEY and the like): read by the server scripts, never committed.
+.env
+/deploy/self-host/backups/
+# The private recursiva-internal repository, cloned here by the maintainers.
+/docs/
+
+# The maintainers keep private documents in a separate repository, cloned here.
+/docs

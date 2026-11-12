@@ -1,0 +1,82 @@
+diff --git a/cjs/src/connection.js b/cjs/src/connection.js
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..a83c20c47482cf6fecc5626b5358b4b0d27ace3c 100644
+--- a/cjs/src/connection.js
++++ b/cjs/src/connection.js
+@@ -157,6 +157,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (terminated)
+       return queryError(q, Errors.connection('CONNECTION_DESTROYED', options))
+ 
++    // A transaction's rollback reaches a connection that has just closed: writing it would throw from an immediate,
++    // out of every catch, and stop the process. True keeps the connection in its queue (closed), so the pool reopens it.
++    if (!socket)
++      return queryError(q, Errors.connection('CONNECTION_CLOSED', options)), true
++
+     if (stream)
+       return queryError(q, Errors.generic('COPY_IN_PROGRESS', 'You cannot execute queries during copy'))
+ 
+@@ -450,7 +455,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (initial)
+       return reconnect()
+ 
+-    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    // Also after a socket error: a rollback can join `sent` between the error and this close, and nothing would answer it.
++    if (query || sent.length)
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    // Nothing answers these any more. Left here, the next connection's first ReadyForQuery takes them for its own: its
++    // first query gets this one's FATAL, and bytes meant for the old socket go out ahead of the startup message.
++    query = results = errorResponse = chunk = nextWriteTimer = null
++    result = new Result()
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+@@ -561,7 +572,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+       if (needsTypes) {
+         initial.reserve && (initial = null)
+-        return fetchArrayTypes()
++        // Its failure reaches `initial` through error(); unhandled here, it would stop the process.
++        return fetchArrayTypes().catch(noop)
+       }
+ 
+       initial && !initial.reserve && execute(initial)
+diff --git a/src/connection.js b/src/connection.js
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..62ec6f8a519c50f72fd4bd9a020b7dc51f509a43 100644
+--- a/src/connection.js
++++ b/src/connection.js
+@@ -157,6 +157,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (terminated)
+       return queryError(q, Errors.connection('CONNECTION_DESTROYED', options))
+ 
++    // A transaction's rollback reaches a connection that has just closed: writing it would throw from an immediate,
++    // out of every catch, and stop the process. True keeps the connection in its queue (closed), so the pool reopens it.
++    if (!socket)
++      return queryError(q, Errors.connection('CONNECTION_CLOSED', options)), true
++
+     if (stream)
+       return queryError(q, Errors.generic('COPY_IN_PROGRESS', 'You cannot execute queries during copy'))
+ 
+@@ -450,7 +455,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (initial)
+       return reconnect()
+ 
+-    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    // Also after a socket error: a rollback can join `sent` between the error and this close, and nothing would answer it.
++    if (query || sent.length)
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    // Nothing answers these any more. Left here, the next connection's first ReadyForQuery takes them for its own: its
++    // first query gets this one's FATAL, and bytes meant for the old socket go out ahead of the startup message.
++    query = results = errorResponse = chunk = nextWriteTimer = null
++    result = new Result()
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+@@ -561,7 +572,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+       if (needsTypes) {
+         initial.reserve && (initial = null)
+-        return fetchArrayTypes()
++        // Its failure reaches `initial` through error(); unhandled here, it would stop the process.
++        return fetchArrayTypes().catch(noop)
+       }
+ 
+       initial && !initial.reserve && execute(initial)

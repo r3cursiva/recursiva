@@ -1,0 +1,39 @@
+// Unused files, exports and dependencies (pnpm check:dead, CI). Entries knip cannot see from package.json scripts and
+// plugins are the scripts people run by hand: benches, the import check and the editor's measurements.
+{
+  "$schema": "https://unpkg.com/knip@6.42.1/schema-jsonc.json",
+  "ignoreBinaries": [
+    // A system binary (tools/dev/tailnet.ts).
+    "tailscale",
+    // A system binary (brew install gitleaks): tools/public/check.ts looks for secrets in the public tree.
+    "gitleaks",
+    // A system binary of macOS: images to PNG for the TUI (apps/tui/src/images.ts).
+    "sips",
+    // System binary (brew install ffmpeg): tools/perf/src/shots.ts cuts the navigation video.
+    "ffmpeg",
+    // Installed globally: gives `pnpm dev` a stable https://rsva.localhost.
+    "portless",
+    // This repository's own CLI (apps/cli, linked as ~/.local/bin/rsva): tools/perf/src/similar.ts reads the workspace with it.
+    "rsva"
+  ],
+  "workspaces": {
+    "apps/web": {
+      "entry": ["src/lib/search.bench.ts"]
+    },
+    "connectors/plane-db": {
+      "entry": ["src/verify.ts"]
+    },
+    // The packages the apps import from: their `exports` make every file an entry, whose exports knip takes as used
+    // unless told to check them against the importers in the other workspaces (RSVA-427).
+    "packages/editor": {
+      "entry": ["perf/*.{ts,tsx}"],
+      "includeEntryExports": true
+    },
+    "packages/ui": {
+      "includeEntryExports": true
+    },
+    "tools/sync-lab": {
+      "entry": ["src/replica-measure.ts"]
+    }
+  }
+}
