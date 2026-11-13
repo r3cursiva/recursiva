@@ -5,10 +5,10 @@ import { InputRule, inputRules, textblockTypeInputRule, undoInputRule, wrappingI
 import { keymap } from "prosemirror-keymap";
 import { Fragment, Node, Slice, type MarkType, type NodeType, type ResolvedPos } from "prosemirror-model";
 import { liftListItem, sinkListItem, splitListItem } from "prosemirror-schema-list";
-import { Plugin, TextSelection, type Command } from "prosemirror-state";
+import { Plugin, TextSelection, type Command, type EditorState, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet, type EditorView, type NodeView, type ViewMutationRecord } from "prosemirror-view";
 import { safeHref } from "../doc.ts";
-import { fromMarkdown } from "../markdown.ts";
+import { fromMarkdown, urlSpans } from "../markdown.ts";
 import { schema } from "../schema.ts";
 import { commandFor, itemType } from "./commands.ts";
 import type { IssueHref } from "../issue-ref.ts";
@@ -29,14 +29,34 @@ function markRule(re: RegExp, type: MarkType): InputRule {
   });
 }
 
+/** A typed URL ending at the caret: after a space or at the line's start, without the punctuation that ends a sentence. */
+const TYPED_URL = /(?:^|\s)(https?:\/\/[^\s]+[^\s.,;:!?)'"])$/;
+
+/** Links the URL that ends at `end`, unless it is not safe or is a link already. */
+function linkTyped(state: EditorState, end: number, url: string): Transaction | null {
+  const href = safeHref(url);
+  const from = end - url.length;
+  if (!href || state.doc.rangeHasMark(from, end, M.link!)) return null;
+  return state.tr.addMark(from, end, M.link!.create({ href }));
+}
+
 /** A URL followed by a space becomes a link. The typed space is not in the document yet: the URL ends at `end`. */
-const autolink = new InputRule(/(?:^|\s)(https?:\/\/[^\s]+[^\s.,;:!?)'"])\s$/, (state, m, _start, end) => {
-  const href = safeHref(m[1]);
-  if (!href) return null;
-  const from = end - m[1]!.length;
-  if (state.doc.rangeHasMark(from, end, M.link!)) return null;
-  return state.tr.insertText(" ", end).addMark(from, end, M.link!.create({ href }));
-});
+const autolink = new InputRule(new RegExp(`${TYPED_URL.source.slice(0, -1)}\\s$`), (state, m, _start, end) => linkTyped(state, end, m[1]!)?.insertText(" ", end) ?? null);
+
+/**
+ * Enter after a URL links it, as a space does (RSVA-627): the link first, then the key's own command on the state it leaves.
+ * An input rule sees typed text only, and Enter is a key.
+ */
+const linkingUrl =
+  (cmd: Command): Command =>
+  (state, dispatch, view) => {
+    const $c = state.selection.$from;
+    const m = state.selection.empty && !$c.parent.type.spec.code ? TYPED_URL.exec($c.parent.textBetween(Math.max(0, $c.parentOffset - 4096), $c.parentOffset, undefined, "￼")) : null;
+    const tr = m ? linkTyped(state, $c.pos, m[1]!) : null;
+    if (!tr || !dispatch || !view) return cmd(state, dispatch, view);
+    dispatch(tr);
+    return cmd(view.state, view.dispatch, view);
+  };
 
 /** "[ ] " or "[x] " at the start of a paragraph, or of a bullet item, makes a task. */
 const taskRule = new InputRule(/^\[( |x)\]\s$/, (state, m, start, end) => {
@@ -129,12 +149,12 @@ function keys(hooks: KeyHooks): Plugin[] {
         hooks.link?.();
         return !!hooks.link;
       },
-      "Mod-Enter": send,
+      "Mod-Enter": linkingUrl(send),
       // A cell is one line: Enter (Shift+Enter where Enter sends) goes to the cell below, as a break has no place there.
-      Enter: hooks.enterSends ? send : chainCommands(cellBelow, newLine),
+      Enter: linkingUrl(hooks.enterSends ? send : chainCommands(cellBelow, newLine)),
       Tab: chainCommands(nextCell(1), inList(sinkListItem)),
       "Shift-Tab": chainCommands(nextCell(-1), inList(liftListItem)),
-      "Shift-Enter": hooks.enterSends ? chainCommands(cellBelow, newLine, baseKeymap.Enter!) : chainCommands(exitCode, cellBelow, hardBreak),
+      "Shift-Enter": linkingUrl(hooks.enterSends ? chainCommands(cellBelow, newLine, baseKeymap.Enter!) : chainCommands(exitCode, cellBelow, hardBreak)),
       ArrowUp: verticalArrow("up"),
       ArrowDown: verticalArrow("down"),
     }),
@@ -153,6 +173,19 @@ export function markdownSlice(text: string): Slice | null {
   return Slice.maxOpen(doc.content);
 }
 
+/** A line of pasted text, its bare URLs linked. */
+function linkedText(line: string): Node[] {
+  const out: Node[] = [];
+  let at = 0;
+  for (const { from, to, href } of urlSpans(line)) {
+    if (from > at) out.push(schema.text(line.slice(at, from)));
+    out.push(schema.text(line.slice(from, to), [M.link!.create({ href })]));
+    at = to;
+  }
+  if (at < line.length) out.push(schema.text(line.slice(at)));
+  return out;
+}
+
 const paste = new Plugin({
   props: {
     // A URL pasted over selected text links it.
@@ -167,10 +200,10 @@ const paste = new Plugin({
     clipboardTextParser(text: string, $context: ResolvedPos, plain: boolean): Slice {
       const md = !plain && !$context.parent.type.spec.code ? markdownSlice(text) : null;
       if (md) return md;
-      // ProseMirror's default for plain text: a paragraph per line.
+      // ProseMirror's default for plain text: a paragraph per line; its bare URLs are links (RSVA-627).
       const blocks = text.replace(/\r\n?/g, "\n").split(/\n/);
       if ($context.parent.type.spec.code) return new Slice(Fragment.from(schema.text(text.replace(/\r\n?/g, "\n"))), 0, 0);
-      return Slice.maxOpen(Fragment.from(blocks.map((l) => N.paragraph!.create(null, l ? schema.text(l) : null))));
+      return Slice.maxOpen(Fragment.from(blocks.map((l) => N.paragraph!.create(null, l ? linkedText(l) : null))));
     },
     // Links in pasted HTML that are not http(s) or mailto are dropped by the schema's parse rules (text stays).
     transformPastedHTML(html: string) {

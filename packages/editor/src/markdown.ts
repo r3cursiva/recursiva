@@ -678,6 +678,21 @@ function bareUrl(s: string): string | null {
   return parses(url) ? url : null;
 }
 
+/**
+ * The bare URLs in plain text, by the rule a comment's Markdown links them (bareUrl): at the start, after a space or `(`.
+ * Pasted text links them as Markdown would: plain text is stored escaped (`https\://`) and is never linked later (RSVA-627).
+ */
+export function urlSpans(text: string): { from: number; to: number; href: string }[] {
+  const out: { from: number; to: number; href: string }[] = [];
+  for (const m of text.matchAll(/(?<![^\s(])https?:\/\//gi)) {
+    if (m.index < (out.at(-1)?.to ?? 0)) continue;
+    const url = bareUrl(text.slice(m.index, m.index + 4096));
+    const href = url && safeHref(url);
+    if (url && href) out.push({ from: m.index, to: m.index + url.length, href });
+  }
+  return out;
+}
+
 /** A host after the scheme, and a URL that parses: checked with canParse, which throws no exception per candidate. */
 const parses = (url: string) => /^https?:\/\/[^/?#\s]/i.test(url) && URL.canParse(url);
 

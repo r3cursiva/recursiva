@@ -151,6 +151,52 @@ test("paste: messy Google Docs and Word HTML is fitted to the schema, scripts an
   assert.doesNotMatch(out, /pwned|script|style=|MsoNormal|<img/);
 });
 
+test("a URL becomes a link on Enter as on a space, and before a comment is sent (RSVA-627)", () => {
+  const url = "https://www.figma.com/design/anPlpiWo5Kln1kxAqHlQIG/laserchat?node-id=58-2819&t=aO8V56plOO25wwvl-4";
+  const description = fakeView();
+  type(description, url);
+  assert.ok(press(description, "Enter"));
+  type(description, "next");
+  assert.equal(md(description), `<${url}>\n\nnext\n`);
+
+  const sentence = fakeView();
+  type(sentence, "see https://x.dev/a.");
+  press(sentence, "Enter");
+  assert.equal(md(sentence), "see https\\://x.dev/a.\n", "a URL ending in a full stop is not one the caret ends");
+
+  let sent = "";
+  const comment = fakeView("", { submit: () => (sent = md(comment)), enterSends: true });
+  type(comment, url);
+  assert.ok(press(comment, "Enter"));
+  assert.equal(sent, `<${url}>\n`);
+
+  const code = fakeView("```\n\n```");
+  code.dispatch(code.state.tr.setSelection(TextSelection.atStart(code.state.doc)));
+  type(code, "https://x.dev");
+  press(code, "Enter");
+  assert.equal(code.state.doc.rangeHasMark(0, code.state.doc.content.size, schema.marks.link!), false, "code holds no link");
+});
+
+test("paste: bare URLs in plain text arrive as links, by the rule Markdown links them (RSVA-627)", () => {
+  const parse = (text: string, md = "") => {
+    const at = fakeView(md);
+    const p = at.state.plugins.find((x) => x.props.clipboardTextParser)!;
+    return p.props.clipboardTextParser!.call(p, text, at.state.doc.resolve(1), true, at as never);
+  };
+  const links = (s: Slice) => {
+    const out: string[] = [];
+    s.content.descendants((n) => {
+      if (n.isText && n.marks.some((m) => m.type === schema.marks.link)) out.push(n.text!);
+    });
+    return out;
+  };
+  const url = "https://www.figma.com/design/anPlpiWo5Kln1kxAqHlQIG/laserchat?node-id=58-2819&t=aO8V56plOO25wwvl-4";
+  assert.deepEqual(links(parse(url)), [url]);
+  assert.deepEqual(links(parse(`look (https://x.dev/a), then https://y.dev.\nno: xhttps://z.dev`)), ["https://x.dev/a", "https://y.dev"]);
+  assert.deepEqual(links(parse("javascript:alert(1) and ftp://x.dev")), []);
+  assert.deepEqual(links(parse(url, "```\n\n```")), [], "in code it stays text");
+});
+
 test("paste: plain text that looks like Markdown arrives formatted; other text stays text", () => {
   const s = markdownSlice("## Notes\n\n- [x] shipped\n- **bold** item")!;
   assert.deepEqual(s.content.content.map((n) => n.type.name), ["heading", "task_list", "bullet_list"]);
