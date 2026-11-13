@@ -419,11 +419,13 @@ test("the comment is written once per change of issues and updated in place", as
   assert.equal(p?.commentId, 777);
 });
 
-test("a public repository's comment names no issue title", async () => {
+test("a public repository's pull request gets no comment, and its issues are linked all the same (RSVA-628)", async () => {
   const i = await freshIssue();
   const body = JSON.stringify({ action: "opened", sender: { login: "a" }, installation: { id: installation }, repository: { id: repoId, full_name: repoName(), private: false }, pull_request: pull({ title: `${keyOf(i)} x` }) });
-  await fetch(`${server.url}/api/github/webhook`, { method: "POST", headers: { "content-type": "application/json", "x-github-event": "pull_request", "x-github-delivery": randomUUID(), "x-hub-signature-256": sign(body) }, body });
-  assert.ok(!comments.at(-1)!.body.includes(i.title));
+  const res = await fetch(`${server.url}/api/github/webhook`, { method: "POST", headers: { "content-type": "application/json", "x-github-event": "pull_request", "x-github-delivery": randomUUID(), "x-hub-signature-256": sign(body) }, body });
+  assert.equal(res.status, 200);
+  assert.equal(comments.length, 0);
+  assert.equal((await linksOf(i.id)).length, 1);
 });
 
 test("one log action says the move and its cause; the project's history shows a Linked merge as the merge it is", async () => {

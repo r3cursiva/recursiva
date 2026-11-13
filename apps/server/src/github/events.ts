@@ -423,9 +423,13 @@ function writeComment(ctx: Context, repo: RepoRow, pull: PullRow): Promise<void>
   return next;
 }
 
-/** The App's one comment on a pull request, as its issues are now. Best effort: the links stand without it. */
+/**
+ * The App's one comment on a pull request, as its issues are now. Best effort: the links stand without it. Only in a
+ * private repository: a public one's readers cannot open the workspace's issues, so its links would lead nowhere
+ * (RSVA-628). A comment written before stays as it was.
+ */
 async function putComment(ctx: Context, repo: RepoRow, pullId: string): Promise<void> {
-  if (!ctx.api || !repo.installationId) return;
+  if (!ctx.api || !repo.installationId || !repo.isPrivate) return;
   const [pull] = await db.select().from(githubPull).where(eq(githubPull.id, pullId));
   if (!pull) return;
   try {
@@ -441,8 +445,7 @@ async function putComment(ctx: Context, repo: RepoRow, pullId: string): Promise<
     const lines = rows.map((r) => {
       const key = issueKey(r.key, r.number);
       const link = PUBLIC_ORIGIN ? `[${key}](${PUBLIC_ORIGIN}${issuePath(r.slug, key)})` : key;
-      // A public repository's readers are not the workspace's: they get the key, not the title.
-      return `- ${link}${repo.isPrivate ? `: ${commentText(r.title)}` : ""} (${r.closing ? "closes on merge" : "linked"})`;
+      return `- ${link}: ${commentText(r.title)} (${r.closing ? "closes on merge" : "linked"})`;
     });
     const text = `${COMMENT_MARK}\n${rows.length ? `**recursiva**\n\n${lines.join("\n")}` : "**recursiva**: no linked issues."}`;
     const id = await ctx.api.writeComment(repo.installationId, repo.fullName, pull.number, pull.commentId, text);
