@@ -56,12 +56,21 @@ const AGENT_GITHUB = "rsva-agents-github";
 
 /**
  * The Keychain services the agent's two tokens are read from. RSVA_AGENT_KEYCHAIN and RSVA_AGENT_GITHUB_KEYCHAIN rename
- * them, so one Mac can keep an agent token for each server it works with (RSVA-547).
+ * them, so one Mac can keep an agent token for each server it works with (RSVA-547). A fine-grained GitHub token has one
+ * resource owner, so the GitHub one is looked for under `<service>-<owner>` first, the owner of the repository's origin,
+ * then under the service itself (RSVA-349).
  */
-const agentKeychain = (env: NodeJS.ProcessEnv = process.env) => ({
-  rsva: env.RSVA_AGENT_KEYCHAIN || AGENT_SERVICE,
-  github: env.RSVA_AGENT_GITHUB_KEYCHAIN || AGENT_GITHUB,
-});
+const agentKeychain = (origin: string, env: NodeJS.ProcessEnv = process.env) => {
+  const github = env.RSVA_AGENT_GITHUB_KEYCHAIN || AGENT_GITHUB;
+  const owner = githubOwner(origin);
+  return { rsva: env.RSVA_AGENT_KEYCHAIN || AGENT_SERVICE, github: owner ? [`${github}-${owner}`, github] : [github] };
+};
+
+/** The owner of a github.com remote, lowercase (https or ssh); null for any other host. */
+export function githubOwner(url: string): string | null {
+  const m = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\//i.exec(url.trim());
+  return m ? m[1]!.toLowerCase() : null;
+}
 
 const DEFAULT_CONFIG = join(homedir(), ".config/rsva/dispatch.json");
 
@@ -346,7 +355,10 @@ export async function trustClone(path: string, trusted: boolean, file = CLAUDE_S
   }
   const state = JSON.parse(text) as { projects?: Record<string, Record<string, unknown>> };
   const projects = (state.projects ??= {});
-  if (trusted) projects[path] = { ...projects[path], hasTrustDialogAccepted: true };
+  // The clone sits inside the owner's copy, so Claude also reads the owner's CLAUDE.md above it, and an @import there
+  // points outside the clone: Claude would stop on the external-imports dialog. Answered "no" here: the clone's own
+  // CLAUDE.md brings its own files, and the agent is not handed the owner's.
+  if (trusted) projects[path] = { ...projects[path], hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: true };
   else if (path in projects) delete projects[path];
   else return;
   const tmp = `${file}.plnr.${process.pid}.${randomUUID()}.tmp`;
@@ -499,7 +511,7 @@ export async function dispatch(
     if (existsSync(p.worktree)) throw new Error(`${where} exists: the issue was dispatched before`);
     return originHead(exec, p.repo);
   });
-  await step(names.worktree, async () => {
+  const origin = await step(names.worktree, async () => {
     // The agent's own clone, not a worktree: a worktree's commits go into the repository's shared .git, which the agent
     // could then rewrite (refs, objects, links in .git/worktrees that git worktree prune follows) under the owner's feet.
     // Cloned from the owner's copy without hard links (--no-local), so every object is hashed again on the way, then
@@ -524,6 +536,7 @@ export async function dispatch(
       await git(["-c", "core.excludesFile=/dev/null", "-C", p.worktree, "check-ignore", "-q", "docs"]).catch(() => Promise.reject(new Error("docs/ is not ignored in the clone (.gitignore): not copied, so it cannot be committed")));
       await cp(join(p.repo, "docs"), join(p.worktree, "docs"), { recursive: true, filter: async (from) => !from.endsWith("/.git") && !(await lstat(from)).isSymbolicLink() });
     }
+    return url;
   });
   if (names.install)
     await step(names.install, async () => {
@@ -540,11 +553,18 @@ export async function dispatch(
   const rexSession = await step(names.rex, async () => {
     // The agent's two tokens, read here into its session's own settings. Never the owner's GitHub token: it can push
     // anywhere and change workflows.
-    const token = (service: string, how: string) => secret(service).catch(() => Promise.reject(new Error(`no token in the Keychain under ${service}: ${how}`)));
-    const services = agentKeychain();
+    // The first of the services that has one: an owner's own token before the shared one.
+    const token = async (services: string[], how: string): Promise<string> => {
+      for (const service of services) {
+        const value = await secret(service).catch(() => null);
+        if (value !== null) return value;
+      }
+      throw new Error(`no token in the Keychain under ${services.join(" or ")}: ${how}`);
+    };
+    const services = agentKeychain(origin);
     const [rsva, github] = await Promise.all([
-      token(services.rsva, "the agents' token"),
-      token(services.github, "a fine-grained GitHub token, Contents and Pull requests: write on the repositories agents work in"),
+      token([services.rsva], "the agents' token"),
+      token(services.github, "a fine-grained GitHub token for the repository's owner, Contents and Pull requests: write"),
     ]);
     const profile = JSON.parse(await readFile(PROFILE, "utf8")) as Profile;
     // git's global config is not read (/dev/null): the owner's name and address come in as the commit identity.

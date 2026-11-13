@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { cleanUp, dispatch, loadConfig, planOf, PROFILE, Runs, stepTexts, trustClone, withProjects, type Config, type Exec, type Run, type Step, type Tracker } from "./dispatch.ts";
+import { cleanUp, dispatch, githubOwner, loadConfig, planOf, PROFILE, Runs, stepTexts, trustClone, withProjects, type Config, type Exec, type Run, type Step, type Tracker } from "./dispatch.ts";
 
 const MAIN_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const choice = { model: "opus" as const, effort: "high" as const, executor: null, context: "" };
@@ -56,13 +56,21 @@ async function world(t: { after: (fn: () => Promise<void>) => void }) {
   const steps: Step[][] = [];
   let clock = 0;
   // The Keychain through readSecret, in the calls as it is asked.
-  const secret = async (service: string) => (calls.push(`keychain ${service}`), service === "rsva-bot" ? "rsva_agent" : "github_pat_agents");
+  // Only the services in `keychain` have a token; the others are not found, as readSecret rejects.
+  const keychain = new Map([["rsva-bot", "rsva_agent"], ["rsva-northwind", "rsva_agent"], ["rsva-agents-github", "github_pat_agents"], ["northwind-github", "github_pat_agents"]]);
+  const secret = async (service: string) => {
+    calls.push(`keychain ${service}`);
+    const value = keychain.get(service);
+    if (value === undefined) throw new Error(`no ${service}`);
+    return value;
+  };
   const deps = { exec, tracker, runs, report: (s: Step[]) => steps.push(s.map((x) => ({ ...x }))), now: () => clock, pause: async (ms: number) => void (clock += ms), claudeState, secret };
   return {
     root,
     repo,
     config,
     calls,
+    keychain,
     fail,
     live,
     wrote,
@@ -137,15 +145,16 @@ test("a dispatch: GitHub's main, the agent's own clone at that commit, Rex sessi
       `${off} -C ${p.worktree} config branch.${p.branch}.remote origin`,
       `${off} -C ${p.worktree} config branch.${p.branch}.merge refs/heads/${p.branch}`,
       "keychain rsva-bot",
+      "keychain rsva-agents-github-r3cursiva",
       "keychain rsva-agents-github",
       "git config --global user.name",
       "git config --global user.email",
       `git -C ${w.repo} config --get core.hooksPath`,
-      ...w.calls.slice(14),
+      ...w.calls.slice(15),
     ],
     "no git worktree, nothing from a ref in a local .git; no run on the issue yet, so Rex is not even asked",
   );
-  assert.deepEqual(w.calls.slice(14).map((c) => c.split(" ").slice(0, 3).join(" ")), [`rex new ${p.session}`, "claude agents --json"]);
+  assert.deepEqual(w.calls.slice(15).map((c) => c.split(" ").slice(0, 3).join(" ")), [`rex new ${p.session}`, "claude agents --json"]);
   assert.ok(!w.calls.some((c) => c.includes("config core.hooksPath ")), "no hooks path in the clone's .git");
   assert.equal(run.rexSession, "session:1");
   const settings = JSON.parse(await readFile(p.settings, "utf8"));
@@ -156,7 +165,7 @@ test("a dispatch: GitHub's main, the agent's own clone at that commit, Rex sessi
   const n = Number(settings.env.GIT_CONFIG_COUNT) - 1;
   assert.deepEqual([settings.env[`GIT_CONFIG_KEY_${n}`], settings.env[`GIT_CONFIG_VALUE_${n}`]], ["core.hooksPath", ".githooks"], "the hooks for the agent's own git, through its environment");
   assert.equal((await stat(p.settings)).mode & 0o777, 0o600);
-  assert.deepEqual((await w.projects())[p.worktree], { hasTrustDialogAccepted: true }, "the clone trusted: Claude opens on no trust dialog");
+  assert.deepEqual((await w.projects())[p.worktree], { hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: true }, "the clone trusted and the owner's imports declined: Claude opens on no dialog");
   assert.deepEqual((await w.projects())[w.repo], { hasTrustDialogAccepted: true, allowedTools: [] }, "the rest of the file as it was");
   assert.equal(JSON.parse(await readFile(w.claudeState, "utf8")).numStartups, 7);
   assert.equal((await stat(w.claudeState)).mode & 0o777, 0o644, "the file keeps its mode");
@@ -164,6 +173,34 @@ test("a dispatch: GitHub's main, the agent's own clone at that commit, Rex sessi
   assert.deepEqual(w.wrote.map((x) => x.split(":")[0]), ["comment PLNR-305", "comment PLNR-305", "start PLNR-305 [views]"], "context, the dispatch line, then In Progress without `proposed`");
   assert.match(w.wrote[1]!, /opus, effort high.*Claude session `[0-9a-f-]{36}`/);
   assert.ok(w.steps.at(-1)!.every((s) => s.state === "done"));
+});
+
+test("the GitHub token of the repository's owner comes first, the shared one after; neither stops the launch (RSVA-349)", async (t) => {
+  const w = await world(t);
+  w.keychain.set("rsva-agents-github-r3cursiva", "github_pat_owner");
+  const p = planOf(issue, choice, w.config);
+  await dispatch(p, issue, w.deps);
+  assert.deepEqual(w.calls.filter((c) => c.startsWith("keychain")), ["keychain rsva-bot", "keychain rsva-agents-github-r3cursiva"]);
+  assert.equal(JSON.parse(await readFile(p.settings, "utf8")).env.GH_TOKEN, "github_pat_owner");
+
+  const none = await world(t);
+  none.keychain.delete("rsva-agents-github");
+  const q = planOf(issue, choice, none.config);
+  await assert.rejects(dispatch(q, issue, none.deps), /no token in the Keychain under rsva-agents-github-r3cursiva or rsva-agents-github/);
+  assert.ok(!existsSync(q.worktree), "the clone rolled back");
+});
+
+test("githubOwner: the owner of a github.com remote, https or ssh; nothing for another host", () => {
+  for (const [url, owner] of [
+    ["https://github.com/optosystems/portal.git", "optosystems"],
+    ["https://x-access-token@github.com/R3cursiva/recursiva", "r3cursiva"],
+    ["git@github.com:ars3nicum/entry.pet.git", "ars3nicum"],
+    ["ssh://git@github.com/optosystems/portal.git", "optosystems"],
+    ["https://gitlab.com/optosystems/portal.git", null],
+    ["https://github.com.evil.example/optosystems/portal.git", null],
+    ["/Users/me/code/portal", null],
+  ] as const)
+    assert.equal(githubOwner(url), owner, url);
 });
 
 test("another server: the agent gets its address, and its tokens come from the Keychain services named for it (RSVA-547)", async (t) => {
@@ -176,7 +213,7 @@ test("another server: the agent gets its address, and its tokens come from the K
   const w = await world(t);
   const p = planOf(issue, choice, w.config);
   await dispatch(p, issue, w.deps);
-  assert.deepEqual(w.calls.filter((c) => c.startsWith("keychain")), ["keychain rsva-northwind", "keychain northwind-github"]);
+  assert.deepEqual(w.calls.filter((c) => c.startsWith("keychain")), ["keychain rsva-northwind", "keychain northwind-github-r3cursiva", "keychain northwind-github"]);
   const { env } = JSON.parse(await readFile(p.settings, "utf8"));
   assert.deepEqual([env.RSVA_URL, env.RSVA_WS], ["https://tracker.example.com", "northwind"], "the agent's rsva talks to the server its token is for");
 });
@@ -361,7 +398,7 @@ test("the clone's trust: what Claude wrote into the entry kept while it is trust
   state.projects[clone].lastSessionId = "s";
   await writeFile(w.claudeState, JSON.stringify(state));
   await trustClone(clone, true, w.claudeState);
-  assert.deepEqual((await w.projects())[clone], { hasTrustDialogAccepted: true, lastSessionId: "s" });
+  assert.deepEqual((await w.projects())[clone], { hasTrustDialogAccepted: true, hasClaudeMdExternalIncludesApproved: false, hasClaudeMdExternalIncludesWarningShown: true, lastSessionId: "s" });
   await trustClone(clone, false, w.claudeState);
   await trustClone(clone, false, w.claudeState);
   assert.deepEqual(Object.keys(await w.projects()), [w.repo]);
