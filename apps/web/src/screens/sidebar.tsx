@@ -34,7 +34,7 @@ import { IssueStateGlyph } from "./state-glyph.tsx";
 import { ViewIcon } from "./view-icon.tsx";
 import { WorkspaceSwitcher } from "./workspace-switcher.tsx";
 import { Link } from "../link.tsx";
-import { capCount } from "@rsva/schema/util";
+import { capCount, shortCount } from "@rsva/schema/util";
 
 
 /** Every screen but the workspace's settings: the workspace, Inbox, My work and Views, the pins, the projects, then the foot. */
@@ -95,8 +95,10 @@ const CollapseButton = observer(function CollapseButton() {
 function NavCount({ n }: { n: number }) {
   if (n <= 0) return null;
   return (
-    <span className="font-mono text-meta text-signal-text strip:absolute strip:top-[3px] strip:right-[3px] strip:grid strip:h-3.5 strip:min-w-3.5 strip:place-items-center strip:rounded-full strip:border-[1.5px] strip:border-sidebar strip:bg-signal strip:px-[3px] strip:text-[9px] strip:leading-none strip:font-medium strip:text-signal-ink">
-      {capCount(n)}
+    <span title={n >= 1000 ? n.toLocaleString("en-US") : undefined} className="font-mono text-meta text-signal-text strip:absolute strip:top-[3px] strip:right-[3px] strip:grid strip:h-3.5 strip:min-w-3.5 strip:place-items-center strip:rounded-full strip:border-[1.5px] strip:border-sidebar strip:bg-signal strip:px-[3px] strip:text-[9px] strip:leading-none strip:font-medium strip:text-signal-ink">
+      {/* The badge on the strip's icon has room for "99+"; the full sidebar compares, so it says "1.2k". */}
+      <span className="strip:hidden">{shortCount(n)}</span>
+      <span className="hidden strip:inline">{capCount(n)}</span>
     </span>
   );
 }
@@ -211,10 +213,10 @@ export function PinIcon({ pin }: { pin: PinTarget }) {
 }
 
 /** What a pin says at its right end: a view's count, an issue's done sub-issues, where a cycle stands. */
-function pinMeta(pin: PinTarget): { text: string; signal?: boolean } | null {
+function pinMeta(pin: PinTarget): { text: string; exact?: string; signal?: boolean } | null {
   if (pin.kind === "view") {
     const n = viewCount(pin.view.id);
-    return n > 0 ? { text: capCount(n) } : null;
+    return n > 0 ? { text: shortCount(n), exact: n.toLocaleString("en-US") } : null;
   }
   if (pin.kind === "issue") {
     const subs = store.subIssuesOf(pin.issue.id);
@@ -256,7 +258,7 @@ const PinLink = observer(function PinLink({ ws, pin, current }: { ws: string; pi
         href={pin.href}
         draggable={false}
         aria-current={current ? "page" : undefined}
-        title={sidebar.strip ? undefined : `${pin.label} · ${where}`}
+        title={sidebar.strip ? undefined : `${pin.label} · ${where}${meta?.exact && meta.exact !== meta.text ? ` · ${meta.exact}` : ""}`}
         data-roving-item
         className={cn(navItem, "pr-8 strip:pr-0")}
       >
