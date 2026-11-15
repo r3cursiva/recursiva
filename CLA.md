@@ -1,7 +1,8 @@
 # Contributor License Agreement
 
-> **Draft for the owner to review. Not legal advice.** To be read by a lawyer before the repository accepts its first
-> outside pull request (ADR 0055). `<LICENSOR>` is the legal name of the entity that receives the rights; fill it in.
+> **Draft, not in effect yet.** This is the agreement outside contributors will be asked to sign; it is still being
+> reviewed, and `<LICENSOR>` stands for the party that will receive the rights. Until the final text is published here,
+> nobody is asked to sign it, and pull requests from outside are reviewed but not merged.
 
 This agreement is between you ("You") and `<LICENSOR>` ("We"). It covers every contribution You make to this project.
 By commenting `I have read the CLA Document and I hereby sign the CLA` on a pull request, You accept it.

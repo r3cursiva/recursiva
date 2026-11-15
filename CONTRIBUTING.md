@@ -73,8 +73,9 @@ touch Markdown or `docs/`. On GitHub, the `CI` workflow runs the same checks on 
 
 Contributions are accepted under a Contributor License Agreement, not a DCO sign-off: it lets the project keep the code
 under its open licenses (AGPL-3.0-only, and Apache-2.0 for `packages/policy`, `schema`, `protocol`, `query` and `sync`)
-and also offer a commercial license to those who cannot use the AGPL. When you open your first pull request, a bot
-will ask you to sign the CLA; the pull request cannot be merged until you have. Details are in the bot's comment.
+and also offer a commercial license to those who cannot use the AGPL. The agreement is still being finalized
+([CLA.md](CLA.md) is the draft): pull requests are welcome and reviewed now, and merged once the final text is published
+and you have signed it. A bot will then ask you in the pull request.
 
 The name and mark recursiva are not licensed with the code: [TRADEMARKS.md](TRADEMARKS.md).
 
