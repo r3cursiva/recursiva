@@ -239,9 +239,9 @@ function Example({ bot }: { bot: string }) {
         bot · 08:51
       </span>
       <div className="rounded-[10px_10px_10px_3px] bg-panel px-3 py-2.5 text-[13px] leading-normal shadow-[0_1px_1px_rgba(0,0,0,.06)]">
-        <span className="font-mono text-[11.5px] text-ink-3">PLNR-37 · Waiting on you</span>
+        <span className="font-mono text-[11.5px] text-ink-3">WEB-37 · Waiting on you</span>
         <br />
-        <b className="font-semibold">site-dev moved PLNR-37 into review</b>
+        <b className="font-semibold">site-dev moved WEB-37 into review</b>
         <br />
         <span className="text-ink-2 underline decoration-rule-strong underline-offset-2">Keyboard shortcuts for My work</span>
       </div>

@@ -69,7 +69,7 @@ if (process.argv[1] === import.meta.filename) {
   const port = Number(process.env.DEMO_PORT ?? 3898);
   const demo = await startDemo(port);
   console.log(`Demo workspace "${DEMO_SLUG}" is in ${demo.db.url} (owner ${DEMO_OWNER}), served at ${demo.server.url} until you press Ctrl-C.`);
-  console.log(`Sign in with the cookie rsva_sid=${demo.session} (docs/status.md: "Войти в локальный интерфейс без письма").`);
+  console.log(`Sign in with the cookie rsva_sid=${demo.session}.`);
   console.log(`To run the dev server on it instead: DATABASE_URL=${demo.db.url} pnpm dev`);
   process.on("SIGINT", () => void demo.server.kill().then(() => process.exit(0)));
 }

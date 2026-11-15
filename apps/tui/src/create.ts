@@ -58,7 +58,7 @@ export function draftOf(s: CreateSource, c: Creating): Draft {
   let error = errors.length ? errorSentence(c.text, errors[0]!) : null;
   if (projects > 1) error ??= "One project only.";
   const parent = c.parentId ? s.issues.get(c.parentId) : undefined;
-  if (!projectId) return { projectId: null, set: {}, title: "", error: error ?? "Which project? Name it with #, as #plnr." };
+  if (!projectId) return { projectId: null, set: {}, title: "", error: error ?? "Which project? Name it with #, as #web." };
   const read = issueFields(filter, ctx, projectId);
   if ("error" in read) error ??= read.error;
   const set: Draft["set"] = { ...(parent ? { parentId: parent.id } : {}), ...("error" in read ? {} : read.set) };

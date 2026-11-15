@@ -19,7 +19,7 @@ const HOWTO =
   "<b>Find</b>\nSearch issues with the app's query language:\n" +
   "<code>/find #INFRA @me</code> — mine in a project\n" +
   "<code>/find !urgent +bug</code> — urgent bugs\n" +
-  "<code>/find PLNR-362</code> — by key\n" +
+  "<code>/find WEB-362</code> — by key\n" +
   "<code>/find state:\"In Review\" updated:last-7-days</code>\n" +
   "<code>/find login page</code> — words in the title";
 

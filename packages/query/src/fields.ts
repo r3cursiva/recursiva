@@ -96,7 +96,7 @@ export function issueFields(f: Filter, ctx: QueryContext, projectId: string, gua
     const cycle = one(f.cycle, "cycle");
     if (cycle) set.cycleId = cycleOf(cycle, ctx, projectId, todayOf(ctx));
     const parent = one(f.parent, "parent");
-    if (parent === "any") throw new Error('"parent:any" narrows a list; name the parent: parent:PLNR-12.');
+    if (parent === "any") throw new Error('"parent:any" narrows a list; name the parent: parent:WEB-12.');
     if (parent) set.parentId = parent === "none" ? null : parent;
     const due = day(f.dueDate, "due:");
     if (due !== undefined) set.dueDate = due;
