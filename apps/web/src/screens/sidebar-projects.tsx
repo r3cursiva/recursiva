@@ -11,7 +11,7 @@ import { DotsThreeIcon, EyeSlashIcon, PlusIcon } from "@phosphor-icons/react";
 import type { ProjectGroup } from "@rsva/protocol";
 import { localToday } from "@rsva/query";
 import { cycleStatus, type Project } from "@rsva/schema/models";
-import { capCount } from "@rsva/schema/util";
+import { shortCount } from "@rsva/schema/util";
 import { Button } from "@rsva/ui/components/button";
 import { CollapsibleCaret } from "@rsva/ui/components/collapsible-caret";
 import { cn } from "@rsva/ui/lib/utils";
@@ -326,7 +326,7 @@ const ProjectLink = observer(function ProjectLink({ ws, project, active, quiet }
           ) : (
             <>
               {waits && <span className={dot} />}
-              {n > 0 && capCount(n)}
+              {n > 0 && shortCount(n)}
             </>
           )}
         </span>

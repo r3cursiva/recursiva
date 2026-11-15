@@ -9,6 +9,16 @@ export function plural(n: number, word: string, pluralWord = `${word}s`): string
 /** A count in a badge: "99+" past 99, so it keeps its width. */
 export const capCount = (n: number): string => (n > 99 ? "99+" : String(n));
 
+/**
+ * A count beside a name, where the numbers are compared: thousands in "k", rounded down so it never claims more
+ * ("1.2k" for 1,299, "12k" for 12,999). At most four characters below a million.
+ */
+export function shortCount(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 10_000) return `${Math.floor(n / 100) / 10}k`;
+  return `${Math.floor(n / 1000)}k`;
+}
+
 /** What to show for anything thrown: an Error's message, otherwise the value as text. */
 export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);

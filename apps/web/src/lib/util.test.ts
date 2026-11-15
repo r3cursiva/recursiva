@@ -1,5 +1,5 @@
 import { assignable } from "@rsva/schema/models";
-import { capCount, errorText, groupBy, plural, seeded, toggled } from "@rsva/schema/util";
+import { capCount, errorText, groupBy, plural, seeded, shortCount, toggled } from "@rsva/schema/util";
 import { avatarTone } from "@rsva/display/avatar";
 import { tileTone } from "@rsva/display/tile";
 import assert from "node:assert/strict";
@@ -70,4 +70,11 @@ test("assignable: people and agents by name, no bots (RSVA-430)", () => {
 
 test("capCount stops at 99+", () => {
   assert.deepEqual([0, 7, 99, 100, 1234].map(capCount), ["0", "7", "99", "99+", "99+"]);
+});
+
+test("shortCount: whole up to 999, then thousands in k rounded down", () => {
+  assert.deepEqual(
+    [0, 99, 100, 999, 1000, 1050, 1299, 9999, 10_000, 12_999, 999_999].map(shortCount),
+    ["0", "99", "100", "999", "1k", "1k", "1.2k", "9.9k", "10k", "12k", "999k"],
+  );
 });
