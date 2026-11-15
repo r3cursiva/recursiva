@@ -96,6 +96,8 @@ with its own recursiva token and a GitHub token of its own, never yours. Require
 
 - **`rsva` CLI** (`apps/cli`): issues, comments, links, relations and cycles from a shell; compact text by default, `--json`
   for the server's answer; no runtime dependencies. `rsva help` lists the commands.
+  Not on npm yet: it runs from a clone, `pnpm install` and `node apps/cli/bin/rsva.js` (the steps:
+  [Getting rsva](https://rsva.dev/docs/terminal/cli#getting-rsva)). `rsva tui` comes with it.
 - **HTTP API**, `/api/v1/workspaces/:ws/...`: issues, comments, cycles, relations, links, labels, states, projects, tokens.
   Reference: https://rsva.dev/docs/agents/api (the whole manual as one file: https://rsva.dev/docs/llms-full.txt).
 
