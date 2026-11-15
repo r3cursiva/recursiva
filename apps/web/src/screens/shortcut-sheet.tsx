@@ -104,13 +104,16 @@ const SECTIONS: { title: string; note?: string; rows: Row[] }[] = [
   {
     title: "My work",
     rows: [
-      ["A group", "1 – 5"],
-      ["Everything", "0"],
+      ["A section", "1 – 9"],
+      ["All workspaces", "0"],
       ["Show done", keys("shift", "D")],
-      ["Limit to a workspace", "F"],
-      ["Home or the queue", "V"],
-      ["On Home, what waits and what has stalled", "J", "K"],
-      ["On Home, open the row", "↵"],
+      ["Limit to a workspace or project", "F"],
+      ["Fold, unfold a project's proposals", "H", "L"],
+      ["Open the issue beside the list", "↵"],
+      ["Accept, decline a proposal", "A", "D"],
+      ["Reply to a mention", "R"],
+      ["Start an issue", "S"],
+      ["A new assignment: Todo, Later, unassign", "T", "L", "U"],
     ],
   },
   {
