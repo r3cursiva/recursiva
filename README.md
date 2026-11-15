@@ -161,7 +161,7 @@ Not there yet:
 ## Contributing
 
 Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the setup and the checks to run before you
-push; contributions need a signed CLA (see [CLA.md](CLA.md)). Security reports: [SECURITY.md](SECURITY.md).
+push; contributions will need a signed CLA, which is still being finalized (the draft: [CLA.md](CLA.md)). Security reports: [SECURITY.md](SECURITY.md).
 
 ## License
 

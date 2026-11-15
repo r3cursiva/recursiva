@@ -23,8 +23,9 @@ jobs:
     timeout-minutes: 5
     # Only in a public repository: a private one has no outside authors, and the check would fail there for want of the
     # signatures branch and the allowlist. Comments other than the two phrases below never start a run.
+    # Off until CLA.md is final (no one signs a draft): remove `false &&` to turn it on.
     if: >-
-      !github.event.repository.private && (
+      false && !github.event.repository.private && (
       github.event_name == 'pull_request_target' ||
       github.event.comment.body == 'recheck' ||
       github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA')
