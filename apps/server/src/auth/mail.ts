@@ -68,9 +68,9 @@ export function devCodeFromEnv(env: NodeJS.ProcessEnv): string | null {
 const SENDER_NAME = "recursiva";
 
 export function senderFromEnv(address: string | undefined): string {
-  if (!address) throw new Error("RSVA_MAIL_FROM is required with RESEND_API_KEY, e.g. 'plan@rsva.dev'");
+  if (!address) throw new Error("RSVA_MAIL_FROM is required with RESEND_API_KEY, e.g. 'tracker@example.com'");
   if (!/^[^\s<>@"]+@[^\s<>@"]+$/.test(address))
-    throw new Error(`RSVA_MAIL_FROM is a bare address, e.g. 'plan@rsva.dev': the sender's name is ${SENDER_NAME} on every server`);
+    throw new Error(`RSVA_MAIL_FROM is a bare address, e.g. 'tracker@example.com': the sender's name is ${SENDER_NAME} on every server`);
   return `${SENDER_NAME} <${address}>`;
 }
 

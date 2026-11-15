@@ -44,7 +44,7 @@ test("the line's fields and title go on the draft; without a state it gets the p
   });
   assert.equal(draftOf(s, line("Ready state:Todo")).set.stateId, S.todo.id, "the person sets a state only people set");
   assert.deepEqual(draftOf(s, line("Fix +bug")).set.labelIds, [L.bug.id], "the project's own label, not another's of the same name");
-  assert.deepEqual(draftOf(s, line("Anything", { projectId: null })).error, "Which project? Name it with #, as #plnr.");
+  assert.deepEqual(draftOf(s, line("Anything", { projectId: null })).error, "Which project? Name it with #, as #web.");
 });
 
 test("a sub-issue is under its parent; a typo is the draft's error and keeps the rest", () => {

@@ -132,7 +132,7 @@ themes and a phone layout.
 ## Quick start
 
 ```sh
-git clone <this repository> recursiva && cd recursiva/deploy/self-host
+git clone https://github.com/r3cursiva/recursiva.git && cd recursiva/deploy/self-host
 cp .env.example .env     # set the database password and who may create workspaces
 docker compose up -d --build
 ```
@@ -157,8 +157,6 @@ Not there yet:
 - imports other than Plane, and export;
 - webhooks, MCP, an SDK;
 - modules, estimates, analytics, pages.
-
-The authoritative list, row by row, is kept with the code and may run ahead of this file.
 
 ## Contributing
 

@@ -733,7 +733,7 @@ const completion: Command = {
 
 const tui: Command = {
   args: "",
-  about: "the live app in the terminal (apps/tui): your work from a copy on this Mac; tui dispatch KEY starts Claude on an issue (--model, --effort, --agent, --context, --dry-run), tui agents lists them",
+  about: "the live app in the terminal (apps/tui): your work from a copy on this Mac; tui dispatch KEY starts Claude on an issue (--model, --effort, --executor, --context, --dry-run), tui agents lists them",
   json: false,
   async run(c) {
     if (!c.io.tui || !c.io.terminal) throw new UsageError("tui needs a terminal");
@@ -842,7 +842,7 @@ const ENV: [string, string][] = [
   ["NO_COLOR", "plain text at a terminal too; FORCE_COLOR: colour into a pipe"],
 ];
 
-const helpText = (s: Style) => `rsva: recursiva from a terminal, for people and agents (docs/agents-api.md)
+const helpText = (s: Style) => `rsva: recursiva from a terminal, for people and agents (https://rsva.dev/docs/agents/api)
 
 ${Object.entries(COMMANDS).map(([n, c]) => (isGroup(c) ? groupText(n, c, s) : line(n, c, s))).join("\n")}
 

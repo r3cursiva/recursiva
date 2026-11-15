@@ -9,7 +9,7 @@ Steps below were run on macOS (arm64) with Docker 29; the image builds for amd64
 ## Start
 
 ```sh
-git clone <this repository> recursiva && cd recursiva/deploy/self-host
+git clone https://github.com/r3cursiva/recursiva.git && cd recursiva/deploy/self-host
 cp .env.example .env
 sed -i.bak "s/change-me/$(openssl rand -hex 16)/; s/you@example.com/YOUR@ADDRESS/" .env   # database password, and who may create workspaces
 docker compose up -d --build     # first build takes a few minutes; later starts take seconds
