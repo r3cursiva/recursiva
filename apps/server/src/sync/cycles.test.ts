@@ -25,18 +25,19 @@ const issuesOf = async (n: number, projectId = f.refs.project.id) => db.select()
 const setCycle = (issueId: string, cycleId: string | null): Op => ({ op: "update", m: "Issue", id: issueId, set: { cycleId } });
 
 test("numbers count up per project; dates are both or none, in order, and clear of the project's other cycles", async () => {
-  const a = await createCycle({ name: "Cycle A", startDate: "2027-01-05", endDate: "2027-01-18" });
+  // Fixed dates far ahead: the later tests place cycles at today plus some days, which must never land on these.
+  const a = await createCycle({ name: "Cycle A", startDate: "2099-01-05", endDate: "2099-01-18" });
   const b = await createCycle({ name: "Draft" });
   assert.equal(b.number, a.number + 1);
   assert.equal(b.startDate, null, "a draft has no dates");
-  await rejects(createCycle({ startDate: "2027-02-01" }), "invalid", /both a start and an end date/);
-  await rejects(createCycle({ startDate: "2027-02-10", endDate: "2027-02-01" }), "invalid", /ends on or after/);
-  await rejects(createCycle({ startDate: "2027-01-18", endDate: "2027-01-31" }), "conflict", /overlap Cycle A \(2027-01-05 – 2027-01-18\)/);
+  await rejects(createCycle({ startDate: "2099-02-01" }), "invalid", /both a start and an end date/);
+  await rejects(createCycle({ startDate: "2099-02-10", endDate: "2099-02-01" }), "invalid", /ends on or after/);
+  await rejects(createCycle({ startDate: "2099-01-18", endDate: "2099-01-31" }), "conflict", /overlap Cycle A \(2099-01-05 – 2099-01-18\)/);
   // Another project's cycles are no obstacle; the day after is free.
-  await createCycle({ startDate: "2027-01-10", endDate: "2027-01-20" }, f.refs.other.id);
-  await createCycle({ startDate: "2027-01-19", endDate: "2027-02-01" });
+  await createCycle({ startDate: "2099-01-10", endDate: "2099-01-20" }, f.refs.other.id);
+  await createCycle({ startDate: "2099-01-19", endDate: "2099-02-01" });
   // Moving a draft onto taken days is refused as well.
-  await rejects(tx([{ op: "update", m: "Cycle", id: b.id, set: { startDate: "2027-01-01", endDate: "2027-01-06" } }]), "conflict");
+  await rejects(tx([{ op: "update", m: "Cycle", id: b.id, set: { startDate: "2099-01-01", endDate: "2099-01-06" } }]), "conflict");
 });
 
 test("the snapshot carries cycles and every issue's cycleId", async () => {
