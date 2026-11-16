@@ -478,6 +478,10 @@
     & [data-group-head] {
       background-color: var(--color-panel);
     }
+    /* A folded group is its head alone: the line under it would lie on the card's own bottom edge. */
+    & > [data-group-head]:last-child {
+      border-bottom-color: transparent;
+    }
     & .list-row {
       clip-path: none;
     }
