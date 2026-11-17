@@ -60,7 +60,7 @@ import { face } from "../lib/face.ts";
 import { observer } from "mobx-react-lite";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { keys } from "@rsva/ui/lib/keys";
-import { DARK_THEME_INFO, LIGHT_THEME_INFO } from "@rsva/display/themes";
+import { pairOnScreen, THEME_PAIRS } from "@rsva/display/themes";
 import { projectPath, setUi, uiChoice } from "../panes.ts";
 import { theme, type ThemePreview } from "../theme.ts";
 import { DENSITY, PANES } from "./layout-options.tsx";
@@ -253,22 +253,25 @@ const Body = observer(function Body() {
     } else if (page === "workspaces") {
       add("Workspaces", pick(workspaceItems(ws)));
     } else if (page === "theme") {
-      // The themes of the side on screen, light or dark, whatever the mode: a pick always shows. The arrow keys show
-      // each one before it is picked, Enter saves it, Esc puts back the saved one; the pointer only highlights, as
-      // passing over the list would flash the app. The other side's themes: switch the mode first, or Settings › Appearance.
+      // The pairs, each shown by its side on screen, light or dark, whatever the mode: a pick always shows. The arrow
+      // keys show each one before it is picked, Enter saves the pair (both sides), Esc puts back the saved one; the
+      // pointer only highlights, as passing over the list would flash the app.
       const dark = theme.dark;
-      const now = dark ? theme.choice.dark : theme.choice.light;
+      const now = pairOnScreen(theme.choice.light, theme.choice.dark, dark);
       add(
-        dark ? "Dark theme" : "Light theme",
+        "Theme",
         pick(
-          (dark ? DARK_THEME_INFO : LIGHT_THEME_INFO).map((t) => ({
-            id: `theme:${t.id}`,
-            label: t.name,
-            icon: <ThemeSwatch info={t} />,
-            run: () => saveLook(theme.use(t.id, t.dark)),
-            preview: { name: t.id, dark: t.dark },
-            checked: t.id === now,
-          })),
+          THEME_PAIRS.map((p) => {
+            const side = dark ? p.dark : p.light;
+            return {
+              id: `theme:${side.id}`,
+              label: p.name,
+              icon: <ThemeSwatch info={side} />,
+              run: () => saveLook(theme.pick(p.light.id, p.dark.id)),
+              preview: { name: side.id, dark },
+              checked: p === now,
+            };
+          }),
         ),
       );
     } else {
@@ -413,8 +416,7 @@ const Body = observer(function Body() {
           <CommandScope aria-label="Back to all commands" onClick={go("root")}>
             {issue && ISSUE_PAGES.has(page) && <span className="font-mono font-normal text-muted-foreground">{store.issueKey(issue)}</span>}
             {(page === "move" || page === "move-subs") && <span className="font-mono font-normal text-muted-foreground">{movingLabel(moving)}</span>}
-            {/* The theme page lists the themes of the side on screen: the chip says which. */}
-            {page === "theme" ? (theme.dark ? "Dark theme" : "Light theme") : SCOPE[page]}
+            {SCOPE[page]}
           </CommandScope>
         )}
         <CommandInput

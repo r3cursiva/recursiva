@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { DARK_THEMES, LIGHT_THEMES } from "@rsva/protocol";
 import { contrast, themeTokens } from "@rsva/display/theme-css";
-import { DARK_THEME_INFO, LIGHT_THEME_INFO } from "@rsva/display/themes";
+import { DARK_THEME_INFO, LIGHT_THEME_INFO, pairOnScreen, THEME_PAIRS } from "@rsva/display/themes";
 
 const css = readFileSync(new URL("../../../../packages/display/src/themes.css", import.meta.url), "utf8");
 const ledger = themeTokens(css, "ledger", false);
@@ -41,6 +41,25 @@ test("each theme the protocol names has a block, and only those", () => {
     [...LIGHT_THEME_INFO, ...DARK_THEME_INFO].map((t) => t.id),
     [...LIGHT_THEMES, ...DARK_THEMES],
   );
+});
+
+test("themes come in pairs: one family name over a light and a dark side", () => {
+  assert.deepEqual(
+    THEME_PAIRS.map((p) => [p.light.id, p.dark.id]),
+    LIGHT_THEMES.map((id, i) => [id, DARK_THEMES[i]]),
+  );
+  for (const p of THEME_PAIRS) {
+    assert.equal(p.light.dark, false);
+    assert.equal(p.dark.dark, true);
+    for (const side of [p.light, p.dark]) assert.ok(side.name === p.name || side.name.startsWith(`${p.name} `), `${side.id}: "${side.name}" is not of the ${p.name} pair`);
+  }
+  assert.equal(new Set(THEME_PAIRS.map((p) => p.name)).size, THEME_PAIRS.length);
+});
+
+test("the pair shown as chosen is the one of the side on screen, when the two sides were saved apart", () => {
+  assert.equal(pairOnScreen("ledger", "dracula", false).name, "Graphite");
+  assert.equal(pairOnScreen("ledger", "dracula", true).name, "Dracula");
+  assert.equal(pairOnScreen("latte", "mocha", true).name, "Catppuccin");
 });
 
 test("a theme sets only tokens its base has", () => {

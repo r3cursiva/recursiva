@@ -1,9 +1,9 @@
-// Settings › Appearance (ADR 0031): the theme — the mode, a light and a dark theme out of eight each — and the layout,
-// the window's panes and the rows' density (panes.ts). After the
-// NavAccountSettings artboard: a card per theme with the app in miniature, drawn in that theme's own colors (its box
-// carries data-theme, so the tokens inside are the theme's, whatever is on screen), its name and a line on its look.
+// Settings › Appearance (ADR 0031): the theme — the mode and one of eight pairs — and the layout, the window's panes
+// and the rows' density (panes.ts). After the ProfileAppearance artboard: a card per pair with the app in miniature
+// twice, its light and its dark side, each drawn in that theme's own colors (its box carries data-theme, so the tokens
+// inside are the theme's, whatever is on screen); the pair's name and its two themes.
 // A change shows at once and is saved to the account.
-import { CheckCircleIcon, WarningOctagonIcon } from "@phosphor-icons/react";
+import { CheckIcon, MoonIcon, SunIcon } from "@phosphor-icons/react";
 import type { ThemeMode } from "@rsva/protocol";
 import { RadioCard, RadioGroup } from "@rsva/ui/components/radio-group";
 import { Segmented } from "@rsva/ui/components/segmented";
@@ -12,9 +12,9 @@ import type { StartedStage } from "@rsva/schema/models";
 import { StateIcon } from "@rsva/ui/components/state-icon";
 import { cn } from "@rsva/ui/lib/utils";
 import { observer } from "mobx-react-lite";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect } from "react";
 import { account } from "../account.ts";
-import { DARK_THEME_INFO, LIGHT_THEME_INFO, type ThemeInfo } from "@rsva/display/themes";
+import { pairOnScreen, THEME_PAIRS, type ThemeInfo, type ThemePair } from "@rsva/display/themes";
 import { setUi, uiChoice } from "../panes.ts";
 import { DENSITY, DENSITY_HINT, PANES, PANES_HINT } from "./layout-options.tsx";
 import { theme } from "../theme.ts";
@@ -27,24 +27,36 @@ const MODES: readonly { value: ThemeMode; label: string }[] = [
 ];
 
 const MODE_HINT: Record<ThemeMode, string> = {
-  system: "Follows your device: the light theme by day, the dark one at night.",
-  light: "The light theme all day.",
-  dark: "The dark theme all day.",
+  system: "Follows your device: the pair's light side by day, its dark side at night.",
+  light: "The pair's light side all day.",
+  dark: "The pair's dark side all day.",
 };
 
 export const Appearance = observer(function Appearance() {
   const { mode, light, dark } = theme.choice;
   const { panes, density } = uiChoice();
+  const on = pairOnScreen(light, dark, theme.dark);
   // Another device may have changed them since this one saved its copy.
   useEffect(() => void account.refresh(), []);
   return (
     <>
-      <SettingsSection id="theme" title="Theme">
+      <SettingsSection id="theme" title="Theme" description="Eight pairs, each a light and a dark side of one idea: the mode picks the side.">
         <SettingRow label="Mode" hint={MODE_HINT[mode]}>
           <Segmented label="Mode" options={MODES} value={mode} onChange={(m) => saving(theme.set({ mode: m }))} />
         </SettingRow>
-        <ThemeGroup label="Light theme" hint="In light mode." themes={LIGHT_THEME_INFO} value={light} active={!theme.dark} />
-        <ThemeGroup label="Dark theme" hint="In dark mode." themes={DARK_THEME_INFO} value={dark} active={theme.dark} />
+        <RadioGroup
+          aria-label="Theme"
+          value={on.name}
+          onValueChange={(v: unknown) => {
+            const p = THEME_PAIRS.find((t) => t.name === v)!;
+            void saving(theme.pick(p.light.id, p.dark.id));
+          }}
+          className="grid-cols-[repeat(auto-fill,minmax(236px,1fr))] gap-4 py-4 max-md:grid-cols-1"
+        >
+          {THEME_PAIRS.map((p) => (
+            <PairCard key={p.name} pair={p} onScreen={p === on ? (theme.dark ? "dark" : "light") : null} />
+          ))}
+        </RadioGroup>
       </SettingsSection>
       <SettingsSection id="layout" title="Layout" description="On a wide screen; a phone shows one pane at a time.">
         <SettingRow label="Panes" hint={PANES_HINT[panes]}>
@@ -58,93 +70,63 @@ export const Appearance = observer(function Appearance() {
   );
 });
 
-/**
- * Eight themes of one kind in one row that scrolls sideways, its edges fading while there is more (shadcn's
- * scroll-fade-x); `active`: the kind on screen now. The padding keeps the focus ring inside the scroll box, which clips
- * both ways.
- */
-const ThemeGroup = observer(function ThemeGroup({ label, hint, themes, value, active }: { label: string; hint: string; themes: readonly ThemeInfo[]; value: string; active: boolean }) {
-  const id = `theme-${themes[0]!.dark ? "dark" : "light"}`;
-  const row = useRef<HTMLDivElement>(null);
-  // The chosen card in view on opening, centered when it is past the edge; the page itself does not scroll.
-  useLayoutEffect(() => {
-    const r = row.current;
-    const card = r?.querySelector<HTMLElement>("[data-checked]");
-    if (r && card && card.offsetLeft + card.offsetWidth > r.clientWidth) r.scrollLeft = card.offsetLeft - (r.clientWidth - card.offsetWidth) / 2;
-  }, []);
+/** A pair: its two sides in miniature, the side on screen marked; its name and its two themes. */
+function PairCard({ pair, onScreen }: { pair: ThemePair; onScreen: "light" | "dark" | null }) {
   return (
-    <div className="flex flex-col gap-2.5 border-b border-rule-soft py-4 last:border-b-0">
-      <span id={id} className="flex items-baseline gap-2">
-        <span className="font-medium">{label}</span>
-        <span className="text-caption text-ink-3">{active ? "On screen now." : hint}</span>
+    <RadioCard value={pair.name}>
+      <span aria-hidden className="flex h-[104px] border-b border-rule">
+        <Miniature info={pair.light} on={onScreen === "light"} />
+        <Miniature info={pair.dark} on={onScreen === "dark"} />
       </span>
-      <RadioGroup
-        aria-labelledby={id}
-        value={value}
-        onValueChange={(v: unknown) => saving(theme.use(v as ThemeInfo["id"], themes[0]!.dark))}
-        ref={row}
-        className="no-scrollbar relative -mx-1.5 -my-1.5 flex scroll-fade-x gap-3 overflow-x-auto p-1.5"
-      >
-        {themes.map((t) => (
-          <ThemeCard key={t.id} info={t} />
-        ))}
-      </RadioGroup>
-    </div>
-  );
-});
-
-// The miniature's rows: a status, how long the title is, and whether it is urgent; the second one is selected.
-const ROWS: readonly [group: string, stage: StartedStage | undefined, width: string, urgent: boolean][] = [
-  ["started", "progress", "72%", false],
-  ["started", "review", "58%", true],
-  ["unstarted", undefined, "80%", false],
-  ["completed", undefined, "46%", false],
-];
-
-function ThemeCard({ info }: { info: ThemeInfo }) {
-  return (
-    <RadioCard value={info.id} className="w-[176px] shrink-0">
-      <Miniature info={info} />
-      <span className="flex flex-col gap-0.5 border-t border-rule px-3 pt-2 pb-2.5">
-        <span className="flex items-center gap-1.5">
-          <span className="text-body font-semibold text-ink">{info.name}</span>
-          <span className="flex-1" />
-          <CheckCircleIcon weight="fill" aria-hidden className="size-4 scale-50 text-ink opacity-0 transition duration-200 ease-spring group-data-checked/card:scale-100 group-data-checked/card:opacity-100" />
+      <span className="flex flex-col gap-1 px-3 pt-2.5 pb-3">
+        <span className="text-body font-semibold text-ink">{pair.name}</span>
+        <span className="font-mono text-[11px] leading-[1.3] text-ink-2">
+          {pair.light.name} / {pair.dark.name}
         </span>
-        <span className="text-caption leading-[1.45] text-ink-3">{info.note}</span>
+      </span>
+      <span className="absolute top-2 right-2 grid size-5 scale-50 place-items-center rounded-full bg-inverse text-inverse-ink opacity-0 transition duration-200 ease-spring group-data-checked/card:scale-100 group-data-checked/card:opacity-100">
+        <CheckIcon weight="bold" className="size-3" />
       </span>
     </RadioCard>
   );
 }
 
-/** The app in a theme's colors: the sidebar with the workspace and its views, the top bar, four rows of a list. */
-function Miniature({ info }: { info: ThemeInfo }) {
+// The miniature's rows: a status, how long the title is, and whether it is selected (the signal's mark beside it).
+const ROWS: readonly [group: string, stage: StartedStage | undefined, width: string, selected: boolean][] = [
+  ["started", "review", "62%", true],
+  ["started", "progress", "74%", false],
+  ["unstarted", undefined, "52%", false],
+  ["completed", undefined, "66%", false],
+];
+
+/** The app in one theme's colors: the sidebar, the top bar, four rows of a list; a sun or a moon in the corner, filled on the side on screen. */
+function Miniature({ info, on }: { info: ThemeInfo; on: boolean }) {
+  const Icon = info.dark ? MoonIcon : SunIcon;
   return (
-    <span aria-hidden data-theme={info.id} className={cn(info.dark ? "dark" : "light", "flex h-[92px] bg-ground text-ink")}>
-      <span className="flex w-[34%] flex-col gap-[5px] border-r border-rule bg-(--ql-sidebar) px-1.5 pt-2">
-        <span className="flex items-center gap-1">
-          <span className="size-[7px] rounded-[2px] bg-ws-teal" />
-          <span className="h-[3px] w-[60%] rounded-full bg-ink-2" />
-        </span>
-        <span className="h-[9px] rounded-[2px] bg-nav-current" />
-        <span className="h-[3px] w-[64%] rounded-full bg-rule-strong" />
-        <span className="h-[3px] w-[78%] rounded-full bg-rule-strong" />
-        <span className="h-[3px] w-[52%] rounded-full bg-rule-strong" />
+    <span data-theme={info.id} className={cn(info.dark ? "dark" : "light", "relative flex min-w-0 flex-1 overflow-hidden bg-ground text-ink")}>
+      <span className="flex w-[30px] shrink-0 flex-col gap-[5px] border-r border-rule bg-(--ql-sidebar) px-[5px] py-2">
+        <span className="h-1 w-[70%] rounded-[2px] bg-ink-3" />
+        <span className="h-2 rounded-[2px] bg-nav-current" />
+        <span className="h-1 w-[60%] rounded-[2px] bg-rule-strong" />
+        <span className="h-1 w-[76%] rounded-[2px] bg-rule-strong" />
+        <span className="h-1 w-[52%] rounded-[2px] bg-rule-strong" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex h-[16px] items-center gap-1 border-b border-rule bg-panel px-1.5">
-          <span className="h-[3px] w-[30%] rounded-full bg-ink" />
+        <span className="flex h-[16px] shrink-0 items-center gap-1 border-b border-rule bg-panel px-1.5">
+          <span className="h-1 w-[26px] rounded-[2px] bg-ink" />
           <span className="flex-1" />
-          <span className="h-[8px] w-[22%] rounded-[2px] bg-inverse" />
+          <span className="h-[7px] w-4 rounded-[2px] bg-inverse" />
         </span>
-        {ROWS.map(([group, stage, width, urgent], i) => (
-          <span key={i} className={cn("flex h-[19px] items-center gap-[5px] border-b border-rule-soft px-1.5", i === 1 && "bg-row-selected")}>
-            <StateIcon group={group} {...(stage ? { stage } : {})} className="size-[9px]" />
-            <span className="h-[3px] rounded-full bg-ink-2 opacity-75" style={{ width }} />
-            <span className="flex-1" />
-            {urgent && <WarningOctagonIcon weight="fill" className="size-[9px] text-signal" />}
+        {ROWS.map(([group, stage, width, selected], i) => (
+          <span key={i} className={cn("flex h-[19px] shrink-0 items-center gap-[5px] border-b border-rule-soft px-1.5", selected && "bg-row-selected")}>
+            <span className={cn("size-[7px] shrink-0 rounded-[2px]", selected && "bg-signal")} />
+            <StateIcon group={group} {...(stage ? { stage } : {})} className="size-[8px] shrink-0" />
+            <span className={cn("h-1 rounded-[2px]", group === "completed" ? "bg-ink-3" : "bg-ink-2")} style={{ width }} />
           </span>
         ))}
+      </span>
+      <span className={cn("absolute right-[5px] bottom-1 grid size-4 place-items-center rounded-full", on ? "bg-inverse text-inverse-ink" : "bg-panel text-ink-2 shadow-[inset_0_0_0_1px_var(--color-rule)]")}>
+        <Icon weight="bold" className="size-2.5" />
       </span>
     </span>
   );
