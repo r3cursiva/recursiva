@@ -1,7 +1,7 @@
 // Settings › Appearance (ADR 0031): the theme — the mode and one of eight pairs — and the layout, the window's panes
 // and the rows' density (panes.ts). After the ProfileAppearance artboard: a card per pair with the app in miniature
 // twice, its light and its dark side, each drawn in that theme's own colors (its box carries data-theme, so the tokens
-// inside are the theme's, whatever is on screen); the pair's name, its two themes and a line on its idea.
+// inside are the theme's, whatever is on screen); the pair's name and its two themes.
 // A change shows at once and is saved to the account.
 import { CheckIcon, MoonIcon, SunIcon } from "@phosphor-icons/react";
 import type { ThemeMode } from "@rsva/protocol";
@@ -70,7 +70,7 @@ export const Appearance = observer(function Appearance() {
   );
 });
 
-/** A pair: its two sides in miniature, the side on screen marked; its name, its two themes and its idea. */
+/** A pair: its two sides in miniature, the side on screen marked; its name and its two themes. */
 function PairCard({ pair, onScreen }: { pair: ThemePair; onScreen: "light" | "dark" | null }) {
   return (
     <RadioCard value={pair.name}>
@@ -83,7 +83,6 @@ function PairCard({ pair, onScreen }: { pair: ThemePair; onScreen: "light" | "da
         <span className="font-mono text-[11px] leading-[1.3] text-ink-2">
           {pair.light.name} / {pair.dark.name}
         </span>
-        <span className="text-caption leading-[1.45] text-ink-3">{pair.note}</span>
       </span>
       <span className="absolute top-2 right-2 grid size-5 scale-50 place-items-center rounded-full bg-inverse text-inverse-ink opacity-0 transition duration-200 ease-spring group-data-checked/card:scale-100 group-data-checked/card:opacity-100">
         <CheckIcon weight="bold" className="size-3" />

@@ -1,5 +1,5 @@
-// The color themes as people see them (ADR 0031): eight pairs, each a family name and a line on its idea, and its light
-// and dark theme with a name and a line of their own. A pair is picked whole; the mode picks the side. The colors are in
+// The color themes as people see them (ADR 0031): eight pairs, each a family name over its light and dark theme, which
+// have a name and a line on their look of their own. A pair is picked whole; the mode picks the side. The colors are in
 // themes.css (theme-css.ts reads them); the ids and which are light or dark in @rsva/protocol, where a light and a dark
 // theme in the same place are a pair. Not in the web's theme.ts: only what offers a choice needs the words (Settings ›
 // Appearance and the command palette, loaded on demand; the TUI's palette).
@@ -39,26 +39,15 @@ export const DARK_THEME_INFO: readonly ThemeInfo[] = DARK_THEMES.map((id) => inf
 
 export interface ThemePair {
   name: string;
-  note: string;
   light: ThemeInfo & { id: LightTheme };
   dark: ThemeInfo & { id: DarkTheme };
 }
 
 /** In the protocol's order: the pair's light theme is LIGHT_THEMES[i], its dark one DARK_THEMES[i]. */
-const PAIRS: readonly [name: string, note: string][] = [
-  ["Graphite", "Warm paper by day, warm graphite at night, a vermilion signal. The default."],
-  ["Catppuccin", "Soft pastels: Latte's paper by day, Mocha's indigo night, a mauve signal."],
-  ["Gruvbox", "The retro editor palette: cream and warm brown, an orange signal."],
-  ["One", "Atom's editor classic: clean light gray and blue-gray, a blue signal."],
-  ["GitHub", "GitHub's own light and dark modes, a GitHub-blue signal."],
-  ["Solarized", "One set of colors on cream and on deep teal, an orange signal."],
-  ["Night Owl", "Clean white and deep night blue, a teal and aqua signal."],
-  ["Dracula", "Alucard's cream by day, Dracula's purple-gray night, a pink signal."],
-];
+const PAIRS: readonly string[] = ["Graphite", "Catppuccin", "Gruvbox", "One", "GitHub", "Solarized", "Night Owl", "Dracula"];
 
-export const THEME_PAIRS: readonly ThemePair[] = PAIRS.map(([name, note], i) => ({
+export const THEME_PAIRS: readonly ThemePair[] = PAIRS.map((name, i) => ({
   name,
-  note,
   light: { ...LIGHT_THEME_INFO[i]!, id: LIGHT_THEMES[i]! },
   dark: { ...DARK_THEME_INFO[i]!, id: DARK_THEMES[i]! },
 }));
