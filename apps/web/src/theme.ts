@@ -1,5 +1,5 @@
 // The color theme (ADR 0031): the mode (as the system, light or dark) and which of the eight light and eight dark
-// themes each side uses. The choice is on the account (account.settings.theme), so every device looks the same; until
+// themes each side uses; a pair is picked whole, so the two sides are one family. The choice is on the account (account.settings.theme), so every device looks the same; until
 // the person picks one there, the device keeps the mode its sidebar button chose before.
 //
 // localStorage "rsva:theme" holds what index.html needs before the first paint, so it never flashes another theme:
@@ -113,13 +113,9 @@ class Theme {
     return account.update({ theme: next });
   }
 
-  /**
-   * A light or a dark theme picked: it takes that side. With the mode fixed on the other side, the mode moves too, so
-   * the pick shows; as the system, it waits for the system to turn to that side.
-   */
-  use(id: LightTheme | DarkTheme, dark: boolean): Promise<void> {
-    const mode = this.mode === (dark ? "light" : "dark") ? (dark ? "dark" : "light") : this.mode;
-    return this.set(dark ? { dark: id as DarkTheme, mode } : { light: id as LightTheme, mode });
+  /** A pair picked: both its sides at once, the mode as it was. */
+  pick(light: LightTheme, dark: DarkTheme): Promise<void> {
+    return this.set({ light, dark });
   }
 
   /** System → light → dark → system. */
