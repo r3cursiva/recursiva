@@ -185,6 +185,561 @@
     --ql-shadow-modal: 0 30px 80px -24px rgba(0, 0, 0, 0.6), 0 2px 8px -2px rgba(0, 0, 0, 0.6);
 }
 
+/* Our own pairs after the Quire artboards «Themes — seven light/dark pairs» (Ledger and Graphite are the first), each
+   a light and a dark side of one idea, on top of Ledger or Graphite (RSVA-632, from archive PR #205). Only what differs
+   from that base is here. The colors are the artboards'; `group` is the sidebar in light and mixed in OKLab on
+   Graphite's step in dark, `danger` is the theme's red, darkened in lightness for white text, `rail` is one step past the
+   sidebar in OKLab (2 × sidebar − ground) and the avatar tones are the eight fixed hues at the theme's own lightness, as
+   in every other theme. */
+/* Blueprint: drafting paper by day, a cyanotype print at night; cobalt and sky signal. */
+[data-theme="blueprint-light"] {
+    --ql-ground: #f2f5f8;
+    --ql-panel: #f9fbfc;
+    --ql-sidebar: #e8edf2;
+    --ql-rail: #dee5ec;
+    --ql-group: #e8edf2;
+    --ql-row-hover: #e5ebf1;
+    --ql-row-selected: #dce4ed;
+    --ql-nav-current: #d5dee8;
+    --ql-rule: #d3dce5;
+    --ql-rule-soft: #e1e7ee;
+    --ql-rule-strong: #b5c1cd;
+    --ql-control-border: #c6d0db;
+    --ql-ink: #0f1b2d;
+    --ql-ink-2: #34465c;
+    --ql-ink-3: #55667a;
+    --ql-faint: #a3b0bd;
+    --ql-inverse: #0f1b2d;
+    --ql-inverse-ink: #f9fbfc;
+    --ql-kbd-on-inverse: #34465c;
+    --ql-kbd-ink-on-inverse: #c6d0db;
+    --ql-code: #e8edf2;
+    --ql-signal: #2457c5;
+    --ql-signal-text: #1d47a8;
+    --ql-status-backlog: #6c7987;
+    --ql-status-todo: #647080;
+    --ql-status-progress: #946f00;
+    --ql-status-review: #28813f;
+    --ql-status-approved: #0a7a77;
+    --ql-status-done: #6a4cc4;
+    --ql-status-canceled: #6c7987;
+    --ql-priority-level: #647080;
+    --ql-success: #176a52;
+    --ql-danger: #be1e37;
+    --ql-avatar-clay: #ffc6bc;
+    --ql-avatar-sand: #f3cf9f;
+    --ql-avatar-moss: #cfdea6;
+    --ql-avatar-sage: #abe6c5;
+    --ql-avatar-teal: #9ae5ed;
+    --ql-avatar-slate: #b7dafe;
+    --ql-avatar-iris: #d8ceff;
+    --ql-avatar-mauve: #f8c3e5;
+}
+
+[data-theme="blueprint-dark"] {
+    --ql-ground: #0e1a2b;
+    --ql-panel: #142031;
+    --ql-sidebar: #0b1522;
+    --ql-rail: #081019;
+    --ql-group: #162132;
+    --ql-row-hover: #182334;
+    --ql-row-selected: #1e2a3a;
+    --ql-nav-current: #212d3d;
+    --ql-rule: #212d3d;
+    --ql-rule-soft: #1b2737;
+    --ql-rule-strong: #3d4858;
+    --ql-control-border: #2e3a4a;
+    --ql-ink: #e3ecf7;
+    --ql-ink-2: #aeb8c4;
+    --ql-ink-3: #8994a1;
+    --ql-faint: #5f6a79;
+    --ql-inverse: #e3ecf7;
+    --ql-inverse-ink: #142031;
+    --ql-kbd-on-inverse: #aeb8c4;
+    --ql-kbd-ink-on-inverse: #394454;
+    --ql-inverse-ink-2: #5c6776;
+    --ql-inverse-line: #86909e;
+    --ql-field: #0b1522;
+    --ql-code: #0b1522;
+    --ql-signal: #5b9bff;
+    --ql-signal-ink: #060a11;
+    --ql-signal-text: #5b9bff;
+    --ql-status-progress: #f0c75a;
+    --ql-status-review: #5cc98a;
+    --ql-status-approved: #36c6c0;
+    --ql-status-done: #a39bff;
+    --ql-error-bg: #352c3d;
+    --ql-error-line: #6a4555;
+    --ql-danger: #be5062;
+    --ql-avatar-clay: #572922;
+    --ql-avatar-sand: #4d3202;
+    --ql-avatar-moss: #343d0d;
+    --ql-avatar-sage: #0b432b;
+    --ql-avatar-teal: #004146;
+    --ql-avatar-slate: #183a5b;
+    --ql-avatar-iris: #3b3058;
+    --ql-avatar-mauve: #502943;
+}
+
+/* Moss: lichen paper and a forest at night, with a coral signal. */
+[data-theme="moss-light"] {
+    --ql-ground: #f1f3ec;
+    --ql-panel: #f9faf6;
+    --ql-sidebar: #e9ece5;
+    --ql-rail: #e1e5de;
+    --ql-group: #e9ece5;
+    --ql-row-hover: #e9ece5;
+    --ql-row-selected: #e6e8e2;
+    --ql-nav-current: #dee1da;
+    --ql-rule: #dee1da;
+    --ql-rule-soft: #e5e7e0;
+    --ql-rule-strong: #cccfc8;
+    --ql-control-border: #d7dad3;
+    --ql-ink: #16211a;
+    --ql-ink-2: #444e46;
+    --ql-ink-3: #5f6760;
+    --ql-faint: #a7aca5;
+    --ql-inverse: #16211a;
+    --ql-inverse-ink: #f9faf6;
+    --ql-kbd-on-inverse: #444e46;
+    --ql-kbd-ink-on-inverse: #c5c9c2;
+    --ql-inverse-ink-2: #aaaea9;
+    --ql-inverse-line: #7c837d;
+    --ql-code: #e9ece5;
+    --ql-signal: #ce5136;
+    --ql-signal-text: #ac4630;
+    --ql-status-progress: #8f6c00;
+    --ql-status-review: #2a7d3f;
+    --ql-status-approved: #0b766f;
+    --ql-status-done: #5a5fc4;
+    --ql-success: #1d7356;
+    --ql-error-bg: #ecdeda;
+    --ql-error-line: #e2b3b6;
+    --ql-danger: #be1e37;
+    --ql-avatar-clay: #ffcfc7;
+    --ql-avatar-sand: #fad6a5;
+    --ql-avatar-moss: #d5e4ac;
+    --ql-avatar-sage: #b1eccb;
+    --ql-avatar-teal: #a0ebf4;
+    --ql-avatar-slate: #c2e0ff;
+    --ql-avatar-iris: #ded5ff;
+    --ql-avatar-mauve: #ffcaec;
+}
+
+[data-theme="moss-dark"] {
+    --ql-ground: #121714;
+    --ql-panel: #171d19;
+    --ql-sidebar: #0f1411;
+    --ql-rail: #0c110e;
+    --ql-group: #191f1b;
+    --ql-row-hover: #1c231f;
+    --ql-row-selected: #222a25;
+    --ql-nav-current: #27302a;
+    --ql-rule: #27302a;
+    --ql-rule-soft: #1e2622;
+    --ql-rule-strong: #404c45;
+    --ql-control-border: #323d36;
+    --ql-ink: #e4ebe5;
+    --ql-ink-2: #b3c0b7;
+    --ql-ink-3: #8d9b91;
+    --ql-faint: #56635b;
+    --ql-inverse: #e4ebe5;
+    --ql-inverse-ink: #121714;
+    --ql-kbd-on-inverse: #8d9b91;
+    --ql-kbd-ink-on-inverse: #404c45;
+    --ql-field: #0f1411;
+    --ql-code: #0f1411;
+    --ql-signal: #f07a55;
+    --ql-signal-ink: #1a0e09;
+    --ql-signal-text: #ff9c7e;
+    --ql-status-backlog: #8c99a0;
+    --ql-status-todo: #9aa59e;
+    --ql-status-progress: #ebcb5a;
+    --ql-status-review: #6fce8a;
+    --ql-status-approved: #3cc7be;
+    --ql-status-done: #9ba3f2;
+    --ql-status-canceled: #8c99a0;
+    --ql-priority-level: #9aa59e;
+    --ql-success: #7ed9ae;
+    --ql-danger: #be5062;
+    --ql-avatar-clay: #61322a;
+    --ql-avatar-sand: #573b0e;
+    --ql-avatar-moss: #3c4618;
+    --ql-avatar-sage: #184c34;
+    --ql-avatar-teal: #004b51;
+    --ql-avatar-slate: #224365;
+    --ql-avatar-iris: #443962;
+    --ql-avatar-mauve: #5a324d;
+}
+
+/* Newsprint: black on white and white on black, every text AAA; press-red signal. */
+[data-theme="newsprint-light"] {
+    --ql-ground: #ffffff;
+    --ql-panel: #ffffff;
+    --ql-sidebar: #f3f3f1;
+    --ql-rail: #e7e7e3;
+    --ql-group: #f3f3f1;
+    --ql-row-hover: #efefec;
+    --ql-row-selected: #e5e5e1;
+    --ql-nav-current: #dcdcd7;
+    --ql-rule: #c9c9c3;
+    --ql-rule-soft: #e0e0dc;
+    --ql-rule-strong: #8f8f89;
+    --ql-control-border: #7c7c76;
+    --ql-ink: #000000;
+    --ql-ink-2: #262626;
+    --ql-ink-3: #474747;
+    --ql-faint: #8f8f89;
+    --ql-inverse: #000000;
+    --ql-inverse-ink: #ffffff;
+    --ql-kbd-on-inverse: #5c5c5c;
+    --ql-kbd-ink-on-inverse: #dedede;
+    --ql-code: #f3f3f1;
+    --ql-signal: #d4111e;
+    --ql-signal-text: #a8000d;
+    --ql-status-backlog: #5b6370;
+    --ql-status-todo: #474747;
+    --ql-status-progress: #735400;
+    --ql-status-review: #186a30;
+    --ql-status-approved: #005e5c;
+    --ql-status-done: #3b3db0;
+    --ql-status-canceled: #5b6370;
+    --ql-priority-level: #474747;
+    --ql-success: #0b5a41;
+    --ql-warning: #5e3f00;
+    --ql-error: #8a0b2e;
+    --ql-error-bg: #f9e3e8;
+    --ql-error-line: #d99aaa;
+    --ql-danger: #8a0b2e;
+    --ql-avatar-clay: #ffc5bb;
+    --ql-avatar-sand: #f3cf9e;
+    --ql-avatar-moss: #cedda5;
+    --ql-avatar-sage: #aae5c4;
+    --ql-avatar-teal: #99e4ed;
+    --ql-avatar-slate: #b6d9fe;
+    --ql-avatar-iris: #d8cdff;
+    --ql-avatar-mauve: #f8c2e5;
+}
+
+[data-theme="newsprint-dark"] {
+    --ql-ground: #000000;
+    --ql-panel: #0b0b0b;
+    --ql-sidebar: #000000;
+    --ql-rail: #000000;
+    --ql-group: #0b0b0b;
+    --ql-row-hover: #0b0b0b;
+    --ql-row-selected: #131313;
+    --ql-nav-current: #171717;
+    --ql-rule: #171717;
+    --ql-rule-soft: #0f0f0f;
+    --ql-rule-strong: #383838;
+    --ql-control-border: #262626;
+    --ql-ink: #ffffff;
+    --ql-ink-2: #dcdcdc;
+    --ql-ink-3: #ababab;
+    --ql-faint: #5e5e5e;
+    --ql-inverse: #ffffff;
+    --ql-inverse-ink: #080808;
+    --ql-kbd-on-inverse: #bfbfbf;
+    --ql-kbd-ink-on-inverse: #333333;
+    --ql-inverse-ink-2: #5e5e5e;
+    --ql-inverse-line: #909090;
+    --ql-field: #000000;
+    --ql-code: #111111;
+    --ql-signal: #ff4545;
+    --ql-signal-ink: #000000;
+    --ql-signal-text: #ff8080;
+    --ql-error-bg: #291618;
+    --ql-error-line: #61343a;
+    --ql-danger: #be5062;
+    --ql-avatar-clay: #50221c;
+    --ql-avatar-sand: #452c01;
+    --ql-avatar-moss: #2d3705;
+    --ql-avatar-sage: #023c25;
+    --ql-avatar-teal: #00393f;
+    --ql-avatar-slate: #113354;
+    --ql-avatar-iris: #352a51;
+    --ql-avatar-mauve: #49223d;
+}
+
+/* Dune: sand and umber, the ink of old maps; an indigo signal, cool against the warm ground. */
+[data-theme="dune-light"] {
+    --ql-ground: #f3ede2;
+    --ql-panel: #faf7f2;
+    --ql-sidebar: #ece6db;
+    --ql-rail: #e5dfd4;
+    --ql-group: #ece6db;
+    --ql-row-hover: #ece6db;
+    --ql-row-selected: #e9e3d8;
+    --ql-nav-current: #e2dbd0;
+    --ql-rule: #e2dbd0;
+    --ql-rule-soft: #e8e2d7;
+    --ql-rule-strong: #d1cabf;
+    --ql-control-border: #dbd4c9;
+    --ql-ink: #2a1f14;
+    --ql-ink-2: #51473d;
+    --ql-ink-3: #6b6257;
+    --ql-faint: #afa79c;
+    --ql-inverse: #2a1f14;
+    --ql-inverse-ink: #faf7f2;
+    --ql-kbd-on-inverse: #51473d;
+    --ql-kbd-ink-on-inverse: #cbc4b9;
+    --ql-inverse-ink-2: #b1aba4;
+    --ql-inverse-line: #888078;
+    --ql-code: #ece6db;
+    --ql-signal: #3946c4;
+    --ql-signal-text: #3946c4;
+    --ql-status-backlog: #7a7f88;
+    --ql-status-progress: #9a6a00;
+    --ql-status-review: #3b7d3a;
+    --ql-status-approved: #127066;
+    --ql-status-done: #4c50c0;
+    --ql-status-canceled: #7a7f88;
+    --ql-success: #1d7055;
+    --ql-error-bg: #efd9d2;
+    --ql-error-line: #e3afaf;
+    --ql-danger: #be1e37;
+    --ql-avatar-clay: #ffcec5;
+    --ql-avatar-sand: #f9d5a4;
+    --ql-avatar-moss: #d4e3ab;
+    --ql-avatar-sage: #b0ebca;
+    --ql-avatar-teal: #9feaf3;
+    --ql-avatar-slate: #c0dfff;
+    --ql-avatar-iris: #ddd4ff;
+    --ql-avatar-mauve: #fec8eb;
+}
+
+[data-theme="dune-dark"] {
+    --ql-ground: #1b1611;
+    --ql-panel: #211c17;
+    --ql-sidebar: #16120e;
+    --ql-rail: #110e0b;
+    --ql-group: #231d18;
+    --ql-row-hover: #251f1a;
+    --ql-row-selected: #2b2620;
+    --ql-nav-current: #2e2923;
+    --ql-rule: #2e2923;
+    --ql-rule-soft: #28221d;
+    --ql-rule-strong: #4a443c;
+    --ql-control-border: #3b352f;
+    --ql-ink: #efe5d6;
+    --ql-ink-2: #bab1a5;
+    --ql-ink-3: #968e82;
+    --ql-faint: #6c655c;
+    --ql-inverse: #efe5d6;
+    --ql-inverse-ink: #211c17;
+    --ql-kbd-on-inverse: #bab1a5;
+    --ql-kbd-ink-on-inverse: #453f38;
+    --ql-inverse-ink-2: #69625a;
+    --ql-inverse-line: #928b80;
+    --ql-field: #16120e;
+    --ql-code: #16120e;
+    --ql-signal: #8f97ff;
+    --ql-signal-ink: #0b0907;
+    --ql-signal-text: #8f97ff;
+    --ql-status-progress: #efc160;
+    --ql-status-review: #7fc883;
+    --ql-status-approved: #4cc1b4;
+    --ql-status-done: #a7acff;
+    --ql-error-bg: #3f2927;
+    --ql-error-line: #724245;
+    --ql-danger: #be5062;
+    --ql-avatar-clay: #562821;
+    --ql-avatar-sand: #4c3102;
+    --ql-avatar-moss: #333d0c;
+    --ql-avatar-sage: #0a422b;
+    --ql-avatar-teal: #024046;
+    --ql-avatar-slate: #18395a;
+    --ql-avatar-iris: #3a2f58;
+    --ql-avatar-mauve: #4f2843;
+}
+
+/* Aubergine: lilac paper and deep aubergine; cerise by day, saffron at night. */
+[data-theme="aubergine-light"] {
+    --ql-ground: #f4f1f6;
+    --ql-panel: #faf9fb;
+    --ql-sidebar: #ede9ef;
+    --ql-rail: #e6e1e8;
+    --ql-group: #ede9ef;
+    --ql-row-hover: #ede9ef;
+    --ql-row-selected: #eae6ec;
+    --ql-nav-current: #e2dfe5;
+    --ql-rule: #e2dfe5;
+    --ql-rule-soft: #e8e5eb;
+    --ql-rule-strong: #d0ccd3;
+    --ql-control-border: #dbd7de;
+    --ql-ink: #221a2a;
+    --ql-ink-2: #4f4856;
+    --ql-ink-3: #696470;
+    --ql-faint: #ada8b1;
+    --ql-inverse: #221a2a;
+    --ql-inverse-ink: #faf9fb;
+    --ql-kbd-on-inverse: #4f4856;
+    --ql-kbd-ink-on-inverse: #cac6cd;
+    --ql-inverse-ink-2: #aeabb2;
+    --ql-inverse-line: #837e88;
+    --ql-code: #ede9ef;
+    --ql-signal: #c2185b;
+    --ql-signal-text: #c2185b;
+    --ql-status-progress: #8e6a00;
+    --ql-status-review: #2d7c4c;
+    --ql-status-approved: #0e7377;
+    --ql-status-done: #6a4cc4;
+    --ql-success: #1d7356;
+    --ql-error-bg: #efdce3;
+    --ql-error-line: #e4b2bd;
+    --ql-danger: #be1e37;
+    --ql-avatar-clay: #fed0c8;
+    --ql-avatar-sand: #fad6a5;
+    --ql-avatar-moss: #d6e4ad;
+    --ql-avatar-sage: #b2eccc;
+    --ql-avatar-teal: #a0ebf4;
+    --ql-avatar-slate: #c3e0fe;
+    --ql-avatar-iris: #dfd6ff;
+    --ql-avatar-mauve: #ffcaec;
+}
+
+[data-theme="aubergine-dark"] {
+    --ql-ground: #1a1420;
+    --ql-panel: #201a26;
+    --ql-sidebar: #15101a;
+    --ql-rail: #100c14;
+    --ql-group: #211b27;
+    --ql-row-hover: #231d29;
+    --ql-row-selected: #2a2430;
+    --ql-nav-current: #2d2733;
+    --ql-rule: #2d2733;
+    --ql-rule-soft: #27202c;
+    --ql-rule-strong: #48424e;
+    --ql-control-border: #3a333f;
+    --ql-ink: #ece4f0;
+    --ql-ink-2: #b8b0bc;
+    --ql-ink-3: #948c98;
+    --ql-faint: #6a636f;
+    --ql-inverse: #ece4f0;
+    --ql-inverse-ink: #201a26;
+    --ql-kbd-on-inverse: #b8b0bc;
+    --ql-kbd-ink-on-inverse: #443e4a;
+    --ql-inverse-ink-2: #67616d;
+    --ql-inverse-line: #908995;
+    --ql-field: #15101a;
+    --ql-code: #15101a;
+    --ql-signal: #f2a93b;
+    --ql-signal-ink: #1a1420;
+    --ql-signal-text: #f2a93b;
+    --ql-status-progress: #f0cf6a;
+    --ql-status-review: #73cf9a;
+    --ql-status-approved: #4fc7c9;
+    --ql-status-done: #b49cff;
+    --ql-error-bg: #3f2733;
+    --ql-error-line: #71414e;
+    --ql-danger: #be5062;
+    /* jscpd:ignore-start: the tones are the fixed hues at the theme's lightness, which Moss Light, Dune Dark and others share */
+    --ql-avatar-clay: #562821;
+    --ql-avatar-sand: #4c3102;
+    --ql-avatar-moss: #333d0c;
+    --ql-avatar-sage: #0b422b;
+    --ql-avatar-teal: #004046;
+    --ql-avatar-slate: #183a5a;
+    --ql-avatar-iris: #3a2f58;
+    --ql-avatar-mauve: #4f2843;
+    /* jscpd:ignore-end */
+}
+
+/* Harbor: sea fog and deep harbor water, an amber buoy for a signal. */
+[data-theme="harbor-light"] {
+    --ql-ground: #eef2f1;
+    --ql-panel: #f7f9f9;
+    --ql-sidebar: #e6ebea;
+    --ql-rail: #dee4e3;
+    --ql-group: #e6ebea;
+    --ql-row-hover: #e6ebea;
+    --ql-row-selected: #e3e7e6;
+    --ql-nav-current: #dbe0df;
+    --ql-rule: #dbe0df;
+    --ql-rule-soft: #e2e6e5;
+    --ql-rule-strong: #c8cecd;
+    --ql-control-border: #d3d9d8;
+    --ql-ink: #0f1f1e;
+    --ql-ink-2: #3f4d4c;
+    --ql-ink-3: #5b6766;
+    --ql-faint: #a2aaa9;
+    --ql-inverse: #0f1f1e;
+    --ql-inverse-ink: #f7f9f9;
+    --ql-kbd-on-inverse: #3f4d4c;
+    --ql-kbd-ink-on-inverse: #c1c8c7;
+    --ql-inverse-ink-2: #a6adac;
+    --ql-inverse-line: #778181;
+    --ql-code: #e6ebea;
+    --ql-signal: #c15d00;
+    --ql-signal-text: #9f4d00;
+    --ql-status-progress: #8a6a00;
+    --ql-status-review: #287a4a;
+    --ql-status-approved: #0b6f78;
+    --ql-status-done: #4f5bc6;
+    --ql-success: #1d7356;
+    --ql-error-bg: #e9ddde;
+    --ql-error-line: #e0b2b9;
+    --ql-danger: #be1e37;
+    /* jscpd:ignore-start: the tones are the fixed hues at the theme's lightness, which Moss Light, Dune Dark and others share */
+    --ql-avatar-clay: #fecfc7;
+    --ql-avatar-sand: #fad6a5;
+    --ql-avatar-moss: #d5e4ac;
+    --ql-avatar-sage: #b1eccb;
+    --ql-avatar-teal: #a0ebf4;
+    --ql-avatar-slate: #c2dfff;
+    --ql-avatar-iris: #ded5ff;
+    --ql-avatar-mauve: #ffc9ec;
+    /* jscpd:ignore-end */
+}
+
+[data-theme="harbor-dark"] {
+    --ql-ground: #0f1a1b;
+    --ql-panel: #152021;
+    --ql-sidebar: #0c1516;
+    --ql-rail: #091011;
+    --ql-group: #162122;
+    --ql-row-hover: #182324;
+    --ql-row-selected: #1f2a2b;
+    --ql-nav-current: #222d2e;
+    --ql-rule: #222d2e;
+    --ql-rule-soft: #1c2727;
+    --ql-rule-strong: #3d4849;
+    --ql-control-border: #2f3a3a;
+    --ql-ink: #e2ecea;
+    --ql-ink-2: #adb8b6;
+    --ql-ink-3: #899493;
+    --ql-faint: #5f6a6a;
+    --ql-inverse: #e2ecea;
+    --ql-inverse-ink: #152021;
+    --ql-kbd-on-inverse: #adb8b6;
+    --ql-kbd-ink-on-inverse: #394444;
+    --ql-inverse-ink-2: #5d6767;
+    --ql-inverse-line: #869090;
+    --ql-field: #0c1516;
+    --ql-code: #0c1516;
+    --ql-signal: #f0a03c;
+    --ql-signal-ink: #0f1a1b;
+    --ql-signal-text: #f0a03c;
+    --ql-status-progress: #efcb62;
+    --ql-status-review: #68cc93;
+    --ql-status-approved: #45c4c8;
+    --ql-status-done: #9fa8f5;
+    --ql-error-bg: #352c2f;
+    --ql-error-line: #6a454b;
+    --ql-danger: #be5062;
+    /* jscpd:ignore-start: the tones are the fixed hues at the theme's lightness, which Moss Light, Dune Dark and others share */
+    --ql-avatar-clay: #562821;
+    --ql-avatar-sand: #4d3202;
+    --ql-avatar-moss: #333d0d;
+    --ql-avatar-sage: #0b432b;
+    --ql-avatar-teal: #004046;
+    --ql-avatar-slate: #183a5a;
+    --ql-avatar-iris: #3b3058;
+    --ql-avatar-mauve: #4f2843;
+    /* jscpd:ignore-end */
+}
+
 /* The other color themes (ADR 0031): four popular open palettes, each in light and dark, on top of Ledger or
    Graphite (the .dark class stays, so dark: variants hold). Only what differs from that base is here. Surfaces, text and
    accents are the palette's own; the layers between (hovers, selections, lines) are mixed in OKLab on the base's steps,

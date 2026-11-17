@@ -801,8 +801,8 @@ test("Home and End in every form terminals send them, PgUp and PgDn as before: f
   assert.deepEqual(keyReader()(`${E}[6~${E}[F${E}[H`), ["pagedown", "end", "home"]);
 });
 
-test("the web's sixteen themes (PLNR-381): every token a colour, the web's own where it has one, chips, diffs and notices readable", () => {
-  assert.equal(THEMES.length, 16);
+test("the web's twenty-eight themes (PLNR-381, RSVA-632): every token a colour, the web's own where it has one, chips, diffs and notices readable", () => {
+  assert.equal(THEMES.length, 28);
   assert.equal(themeColours("graphite"), themeColours("no such theme"));
   // Mocha's ground and signal as themes.css has them.
   assert.equal(themeColours("mocha").ground, "#1e1e2e");

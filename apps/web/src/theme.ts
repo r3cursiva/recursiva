@@ -1,4 +1,4 @@
-// The color theme (ADR 0031): the mode (as the system, light or dark) and which of the eight light and eight dark
+// The color theme (ADR 0031): the mode (as the system, light or dark) and which of the fourteen light and fourteen dark
 // themes each side uses; a pair is picked whole, so the two sides are one family. The choice is on the account (account.settings.theme), so every device looks the same; until
 // the person picks one there, the device keeps the mode its sidebar button chose before.
 //
