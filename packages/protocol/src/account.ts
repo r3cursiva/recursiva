@@ -58,11 +58,12 @@ export const WEEK_STARTS: readonly WeekStart[] = [1, 0, 6];
 export const THEME_MODES = ["system", "light", "dark"] as const;
 export type ThemeMode = (typeof THEME_MODES)[number];
 /**
- * The color themes, eight of each kind: ours first (the default), then Catppuccin, Gruvbox, One, GitHub, Solarized,
- * Night Owl and Dracula. A light one and a dark one in the same place are a pair.
+ * The color themes, fourteen of each kind: ours first (Graphite, the default, then Blueprint, Moss, Newsprint, Dune,
+ * Aubergine and Harbor), then Catppuccin, Gruvbox, One, GitHub, Solarized, Night Owl and Dracula. A light one and a dark
+ * one in the same place are a pair.
  */
-export const LIGHT_THEMES = ["ledger", "latte", "gruvbox-light", "one-light", "github-light", "solarized-light", "night-owl-light", "alucard"] as const;
-export const DARK_THEMES = ["graphite", "mocha", "gruvbox-dark", "one-dark", "github-dark", "solarized-dark", "night-owl", "dracula"] as const;
+export const LIGHT_THEMES = ["ledger", "blueprint-light", "moss-light", "newsprint-light", "dune-light", "aubergine-light", "harbor-light", "latte", "gruvbox-light", "one-light", "github-light", "solarized-light", "night-owl-light", "alucard"] as const;
+export const DARK_THEMES = ["graphite", "blueprint-dark", "moss-dark", "newsprint-dark", "dune-dark", "aubergine-dark", "harbor-dark", "mocha", "gruvbox-dark", "one-dark", "github-dark", "solarized-dark", "night-owl", "dracula"] as const;
 export type LightTheme = (typeof LIGHT_THEMES)[number];
 export type DarkTheme = (typeof DARK_THEMES)[number];
 /** The mode, and which theme is used for light and which for dark. */

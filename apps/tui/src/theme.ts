@@ -158,7 +158,7 @@ export const TILE: Record<TileTone, [fg: Colour, bg: Colour]> = {
 /** A state's tint, for its chip: the status colour's own. */
 export const tintOf = (tone: Token): Token => (tone.startsWith("status-") ? (`tint-${tone.slice(7)}` as Token) : "row-selected");
 
-/** The themes the palette offers, the web's sixteen, each side of its eight pairs (PLNR-381): the dark ones first, Graphite Dark the default. */
+/** The themes the palette offers, the web's twenty-eight, each side of its fourteen pairs (PLNR-381): the dark ones first, Graphite Dark the default. */
 export const THEMES: readonly ThemeInfo[] = [...DARK_THEME_INFO, ...LIGHT_THEME_INFO];
 
 /**

@@ -1,4 +1,4 @@
-// Settings › Appearance (ADR 0031): the theme — the mode and one of eight pairs — and the layout, the window's panes
+// Settings › Appearance (ADR 0031): the theme — the mode and one of fourteen pairs — and the layout, the window's panes
 // and the rows' density (panes.ts). After the ProfileAppearance artboard: a card per pair with the app in miniature
 // twice, its light and its dark side, each drawn in that theme's own colors (its box carries data-theme, so the tokens
 // inside are the theme's, whatever is on screen); the pair's name and its two themes.
@@ -40,7 +40,7 @@ export const Appearance = observer(function Appearance() {
   useEffect(() => void account.refresh(), []);
   return (
     <>
-      <SettingsSection id="theme" title="Theme" description="Eight pairs, each a light and a dark side of one idea: the mode picks the side.">
+      <SettingsSection id="theme" title="Theme" description="Each pair is a light and a dark side of one idea: the mode picks the side.">
         <SettingRow label="Mode" hint={MODE_HINT[mode]}>
           <Segmented label="Mode" options={MODES} value={mode} onChange={(m) => saving(theme.set({ mode: m }))} />
         </SettingRow>
