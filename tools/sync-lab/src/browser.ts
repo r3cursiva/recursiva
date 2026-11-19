@@ -145,8 +145,11 @@ try {
 
     // The first tab closes: the second takes over the connection and saves by itself.
     await a.close();
-    await second.waitForFunction(() => document.body.innerText.includes("Online"), undefined, { timeout: NOTICE });
+    // It was online through the first tab: "Online" alone says nothing yet. Its own socket is the sign it took over.
+    const t0 = Date.now();
+    while (sockets === 0 && Date.now() - t0 < NOTICE) await second.waitForTimeout(100);
     assert.equal(sockets, 1, "the second tab opened its own connection");
+    await second.waitForFunction(() => document.body.innerText.includes("Online"), undefined, { timeout: NOTICE });
     await describe(second, "saved by the tab that took over");
     await b.getByText("saved by the tab that took over").waitFor({ timeout: NOTICE });
   });
