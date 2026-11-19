@@ -3,6 +3,8 @@
 // database starts over every day. It holds nothing else: the server refuses to run in this mode on a database with other
 // workspaces or people, and with mail or Telegram set up (a visitor's invite or notification must reach nobody).
 import { randomInt, randomUUID } from "node:crypto";
+import { appendFile } from "node:fs/promises";
+import { join } from "node:path";
 import { DEMO } from "@rsva/protocol";
 import { and, eq, like, ne, notLike, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -119,15 +121,51 @@ export async function enterDemo(): Promise<string> {
   return u!.id;
 }
 
+/** A day of the demo: since its seed, who walked in, how many of them changed something, and how many changes. */
+interface DemoDay {
+  since: string;
+  visitors: number;
+  active: number;
+  changes: number;
+}
+
 /**
- * Every day the demo starts over: past its age, every table is emptied and the process ends, and the next start seeds a
- * fresh copy (the container is restarted by Docker). A process that ends drops every cache and socket with the data.
+ * The day so far, read from the log: a visitor's own entry (the User action that announced them) is no change of theirs.
+ * Null before the first seed.
+ */
+async function demoDay(): Promise<DemoDay | null> {
+  const ws = await demoWorkspace();
+  if (!ws) return null;
+  const [r] = await sql<{ visitors: number; active: number; changes: number }[]>`
+    select (select count(*)::int from "user" where email like ${`%@${DEMO.emailDomain}`}) as visitors,
+      count(distinct a.actor_id)::int as active, count(*)::int as changes
+    from sync_action a join "user" u on u.id = a.actor_id
+    where a.workspace_id = ${ws.id} and a.model <> 'User' and u.email like ${`%@${DEMO.emailDomain}`}`;
+  return { since: new Date(madeAt(ws.id)).toISOString(), ...r! };
+}
+
+/**
+ * Keeps the day before the data goes: a line of JSON in demo-days.jsonl in the files directory (RSVA_FILES_DIR), which
+ * the reset does not touch, and the log. Without the directory, the log alone.
+ */
+export async function keepDemoDay(dir: string | undefined, log: { info: (o: object, m: string) => void }): Promise<void> {
+  const day = await demoDay();
+  if (!day) return;
+  log.info({ ...day }, "a day of the demo");
+  if (dir) await appendFile(join(dir, "demo-days.jsonl"), JSON.stringify(day) + "\n");
+}
+
+/**
+ * Every day the demo starts over: past its age, the day is kept (keepDemoDay), every table is emptied and the process
+ * ends, and the next start seeds a fresh copy (the container is restarted by Docker). A process that ends drops every
+ * cache and socket with the data.
  */
 export function demoResets(log: { info: (o: object, m: string) => void; error: (e: unknown, m: string) => void }): void {
   const check = async () => {
     const ws = await demoWorkspace();
     if (!ws || Date.now() - madeAt(ws.id) < DEMO_LIFE_MS) return;
     await checkDemo(process.env);
+    await keepDemoDay(process.env.RSVA_FILES_DIR, log).catch((e: unknown) => log.error(e, "the demo's day was not kept"));
     const tables = await sql<{ name: string }[]>`select tablename as name from pg_tables where schemaname = 'public'`;
     await sql.unsafe(`truncate table ${tables.map((t) => `"${t.name}"`).join(", ")} restart identity cascade`);
     log.info({ tables: tables.length }, "the demo starts over");
