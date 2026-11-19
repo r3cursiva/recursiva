@@ -2,13 +2,16 @@
 // The mode is read when the modules load, so they are loaded after it is set.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, test } from "node:test";
 import { DEMO } from "@rsva/protocol";
 
 process.env.RSVA_DEMO = "on";
 const { sql } = await import("../db.ts");
 const { buildApp } = await import("../app.ts");
-const { checkDemo, seedDemo } = await import("./demo.ts");
+const { checkDemo, keepDemoDay, seedDemo } = await import("./demo.ts");
 const { importFixture } = await import("../test/helpers.ts");
 
 const app = buildApp({ logLevel: "warn", mailer: async () => {} });
@@ -49,6 +52,27 @@ test("a visitor walks in with no sign-up, as a member of their own, and may uplo
   assert.match(up.json<{ message: string }>().message, /in the demo/, up.body);
   const pic = await app.inject({ method: "PUT", url: "/auth/me/picture", headers: { cookie, origin: "http://localhost", "content-type": "image/png" }, payload: bytes });
   assert.match(pic.json<{ message: string }>().message, /in the demo/, pic.body);
+});
+
+test("the day is kept before the reset: who walked in, how many changed something, and how many changes", async () => {
+  await seedDemo(app);
+  const enter = async () => {
+    const r = await app.inject({ method: "POST", url: "/auth/demo", payload: {} });
+    return [r.headers["set-cookie"]].flat().map((c) => String(c).split(";")[0]).join("; ");
+  };
+  const busy = await enter();
+  await enter(); // walks in and does nothing
+  const change = await app.inject({ method: "PATCH", url: `/api/v1/workspaces/${DEMO.slug}/issues/WEB-4`, headers: { cookie: busy, origin: "http://localhost" }, payload: { title: "Changed by a visitor" } });
+  assert.equal(change.statusCode, 200, change.body);
+  const dir = mkdtempSync(join(tmpdir(), "rsva-demo-"));
+  const logged: object[] = [];
+  await keepDemoDay(dir, { info: (o) => logged.push(o) });
+  const day = JSON.parse(readFileSync(join(dir, "demo-days.jsonl"), "utf8").trim()) as { visitors: number; active: number; changes: number; since: string };
+  assert.ok(day.visitors >= 2, `${day.visitors} visitors`);
+  assert.equal(day.active, 1, "only the one who changed something");
+  assert.equal(day.changes, 1);
+  assert.ok(Date.parse(day.since) <= Date.now());
+  assert.deepEqual(logged, [day]);
 });
 
 test("the demo refuses a database with anything else in it, and mail or Telegram set up", async () => {

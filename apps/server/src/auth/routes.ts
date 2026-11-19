@@ -180,7 +180,9 @@ export function registerAuthRoutes(app: FastifyInstance, mailer: Mailer, telegra
     app.get("/auth/demo", async (): Promise<DemoInfo> => ({ workspace: DEMO.slug }));
     app.post("/auth/demo", async (req, reply) => {
       limit(demoByIp, clientKey(req.ip));
-      return signIn(req, reply, await enterDemo(), "code");
+      const id = await enterDemo();
+      req.log.info({ visitor: id }, "a visitor entered the demo");
+      return signIn(req, reply, id, "code");
     });
   }
 
