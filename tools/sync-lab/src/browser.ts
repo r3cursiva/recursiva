@@ -74,7 +74,9 @@ try {
   });
 
   await check("a link dead without a word: the app finds out and says so", async () => {
-    const page = await one.newPage();
+    // A browser of its own: a second tab of `one` would go through the first one's connection (tabs.ts) and have none.
+    const own = await signedIn("a");
+    const page = await own.newPage();
     const link = await silentLink(page);
     await ready(page);
     link.dead = true;
@@ -84,7 +86,7 @@ try {
     link.dead = false;
     await toast(page, "All changes saved").waitFor({ timeout: NOTICE * 2 });
     await b.getByText("typed into the void").waitFor({ timeout: NOTICE });
-    await page.close();
+    await own.close();
   });
 
   await check("two people rewrite one description offline: both texts stay, nobody is refused", async () => {
@@ -125,6 +127,28 @@ try {
       await page.getByText("second line typed slowly by B here").waitFor({ timeout: NOTICE });
     }
     await shot(b, "typing-merged");
+  });
+
+  await check("a second tab opens no connection, and what it changes offline shows in the first at once (RSVA-144)", async () => {
+    await ready(a);
+    const second = await one.newPage();
+    let sockets = 0;
+    second.on("websocket", () => sockets++);
+    await ready(second);
+    assert.equal(sockets, 0, "the second tab goes through the first one's connection");
+    await one.setOffline(true);
+    await describe(second, "typed offline in the second tab");
+    await a.getByText("typed offline in the second tab").waitFor({ timeout: NOTICE });
+    await shot(a, "tabs-offline");
+    await one.setOffline(false);
+    await b.getByText("typed offline in the second tab").waitFor({ timeout: NOTICE });
+
+    // The first tab closes: the second takes over the connection and saves by itself.
+    await a.close();
+    await second.waitForFunction(() => document.body.innerText.includes("Online"), undefined, { timeout: NOTICE });
+    assert.equal(sockets, 1, "the second tab opened its own connection");
+    await describe(second, "saved by the tab that took over");
+    await b.getByText("saved by the tab that took over").waitFor({ timeout: NOTICE });
   });
 } catch (e) {
   failed = true;

@@ -79,6 +79,7 @@ import { copyName, type Disk, type Disks } from "./disk.ts";
 import { idbDisks } from "./idb.ts";
 import { Link, type LinkHost, type LinkTimes, type SocketLike } from "./link.ts";
 import { lines } from "./lines.ts";
+import { Tabs, type QueuedTx, type TabHost, type TabsOptions } from "./tabs.ts";
 import { now, warn } from "./log.ts";
 import { cycleComplete, cycleDelete, issueMoves, labelCreate, labelDelete, linkUpdate, reactionToggle, relationChange, rowUpdate, stateCreate, stateDelete, stateUpdate, withBase, workspaceUpdate } from "./writes.ts";
 import { MODELS, Pool, type AnyModel, type IssueRelations, type IssueShelf, type Row } from "./pool.ts";
@@ -127,6 +128,11 @@ export interface SyncStoreOptions {
    * them, before anything re-renders.
    */
   onOthersChange?: (issueIds: readonly string[]) => void;
+  /**
+   * The browser's tabs (tabs.ts, browserTabs()): one of them holds the connection for all, and a change made in one shows
+   * in the others at once. Missing or null: this engine connects by itself (the TUI, tests, a browser without Web Locks).
+   */
+  tabs?: TabsOptions | null;
 }
 
 /** Refusals that are about now and not about the change: it stays queued and goes again after the wait. */
@@ -191,6 +197,11 @@ interface PendingTx {
    * person the next snapshot names is only whoever holds the browser's credential then. Missing before PLNR-189.
    */
   by?: string;
+  /**
+   * Another tab's change, by that tab's id (tabs.ts): shown here, sent only by the leader, and refused here without a
+   * notice, which the tab that made it shows. Not on the disk: that tab wrote it there.
+   */
+  tab?: string;
 }
 
 /** How long the start (or a reconnect) has the network to itself before the activity to keep is fetched. */
@@ -278,7 +289,7 @@ function tooBig(tx: PendingTx): boolean {
  * Members that are neither private nor in SyncEngine are what FeedCache and Link read of the engine (FeedHost, LinkHost):
  * the engine is their host itself, not an object of closures. The class is not exported.
  */
-class Engine implements SyncEngine, FeedHost, LinkHost {
+class Engine implements SyncEngine, FeedHost, LinkHost, TabHost {
   status: LoadStatus = "loading";
   error: string | null = null;
   errorCode: ErrorCode | null = null;
@@ -318,8 +329,9 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
   /** The pool holds a complete server state at lastSyncId: deltas apply and `sub` may be sent. */
   private based = false;
   private fetching = false;
-  /** The socket to the server. */
+  /** The socket to the server, or in a tab that is not the leader, the leader (tabs.ts). */
   private readonly wire: Link;
+  private readonly tabs: Tabs | null;
   private resubbing = false;
   private ackTimer: ReturnType<typeof setTimeout> | undefined;
   private stallTimer: ReturnType<typeof setTimeout> | undefined;
@@ -363,7 +375,11 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
     this.persistDelay = o.persistDelay ?? 1000;
     this.onAccount = o.onAccount;
     this.fillDelay = o.fillDelay ?? FILL_DELAY_MS;
-    this.wire = new Link(o.socketUrl ?? `${this.base.replace(/^http/, "ws")}/ws`, o.WebSocket ?? g.WebSocket, o.link, o.backoff ?? [500, 30_000], this);
+    this.tabs = o.tabs ? new Tabs(o.tabs, o.workspace, this) : null;
+    const WS = o.WebSocket ?? g.WebSocket;
+    const tabs = this.tabs;
+    const open = WS && ((url: string) => (tabs && !tabs.leading ? tabs.relaySocket() : new WS(url)));
+    this.wire = new Link(o.socketUrl ?? `${this.base.replace(/^http/, "ws")}/ws`, open, o.link, o.backoff ?? [500, 30_000], this);
     this.feeds = new FeedCache(this);
     this.inbox = new Inbox(this.pool, () => this.meId, () => this.role, () => this.lastSyncId, (f) => this.send(f), () => this.markDirty());
     this.views = new Views(() => this.meId, (f) => this.send(f), () => this.markDirty());
@@ -502,6 +518,11 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
   issueKey(issue: Issue): string {
     return this.pool.issueKey(issue);
   }
+  savingHere(issueId: string): boolean {
+    // Observed through pendingById: the pending list itself is a plain array.
+    return this.pendingById.has(keyOf("Document", issueId)) && this.pending.some((t) => !t.tab && t.ops.some((o) => o.m === "Document" && o.id === issueId));
+  }
+
   isPending(id: string, model?: "Document"): boolean {
     return this.pendingById.has(keyOf(model ?? "", id));
   }
@@ -588,7 +609,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
     const last = this.pending.findLast((t) => t.ops.some(isSave));
     // Saves that never left replace each other: offline a text is saved every few seconds, and only the last one is wanted.
     // Under a new id: another tab may have read the old one from the disk, and a repeat of an id is not applied again.
-    if (last && !last.sent && last.ops.length === 1 && !this.wire.live) {
+    if (last && !last.sent && !last.tab && last.ops.length === 1 && !this.wire.live) {
       const op = { ...last.ops[0]!, set: { doc } } as Op;
       const next: PendingTx = { ...last, id: uuidv7(), ops: [op] };
       this.pending[this.pending.indexOf(last)] = next;
@@ -596,7 +617,8 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
       if (this.db) this.db.delTx(last.id).catch(warn);
       runInAction(() => this.applyOp(op, next.at ?? new Date().toISOString()));
       if (tooBig(next)) return this.refuse(next, "too_large", "this change is too large to save");
-      return this.keep(next);
+      this.keep(next);
+      return this.tabs?.replace(last.id, stored(next));
     }
     // On top of a save of ours still on its way; otherwise on the text the editor had, or the one here.
     const base = last ? last.id : seen !== undefined ? seen : row?.tx;
@@ -766,6 +788,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
     this.watchStall();
     if (tooBig(tx)) return this.refuse(tx, "too_large", "this change is too large to save");
     this.keep(tx);
+    this.tabs?.made(stored(tx));
     if (this.sending) this.sendTx(tx);
   }
 
@@ -794,9 +817,14 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
     if (unsafe !== this.unsafe) runInAction(() => (this.unsafe = unsafe));
   }
 
-  /** The queue may go out now: on a live connection, from a full copy, and not during a wait the server asked for. */
+  /** The queue may go out now: from the leader, on a live connection, from a full copy, not during a wait the server asked for. */
   private get sending(): boolean {
-    return this.wire.live && this.based && !this.holdTimer;
+    return this.leading && this.wire.live && this.based && !this.holdTimer;
+  }
+
+  /** This tab holds the connection (tabs.ts); without tabs, always. */
+  private get leading(): boolean {
+    return !this.tabs || this.tabs.leading;
   }
 
   private sendTx(tx: PendingTx): void {
@@ -1064,6 +1092,13 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
 
   /** The change is off: its effect goes, what the user typed stays with the refusal. */
   private refuse(tx: PendingTx, code: string, message: string): void {
+    // Another tab's change: it goes here too, and that tab tells its person.
+    if (tx.tab) {
+      return runInAction(() => {
+        this.removeTx(tx, true);
+        this.passOnBase(tx);
+      });
+    }
     runInAction(() => {
       // Before the revert takes the row. Its feed may not be open, after a reload or for an issue left meanwhile.
       const refused = this.refusedComment(tx, message);
@@ -1124,6 +1159,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
     let replaced = false;
     // Up to the server's caught-up the frames are the copy catching up, not changes happening now.
     const others = this.onOthersChange && this.caughtUp ? new Set<string>() : null;
+    const applied: Action[] = [];
     try {
       runInAction(() => {
         for (const a of actions) {
@@ -1140,6 +1176,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
           // And its state before, as the server had it: Done out of a review is not the news Done out of the blue is.
           this.inbox.observe(a, prev, before?.stateId as string | undefined);
           this.lastSyncId = a.id;
+          applied.push(a);
         }
         this.settle();
       });
@@ -1150,6 +1187,8 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
       replaced = true;
     }
     this.markDirty();
+    // The other tabs get what was applied, in order and without gaps, whatever frames it came in.
+    this.tabs?.applied(applied);
     if (replaced) this.resync();
     else if (others?.size) this.onOthersChange!([...others]);
   }
@@ -1299,6 +1338,8 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
     g.addEventListener?.("focus", this.onWake);
     g.addEventListener?.("pageshow", this.onWake);
     (g.document as Listens | undefined)?.addEventListener?.("visibilitychange", this.onWake);
+    // After the queue on disk is read: what the other tabs send of theirs is then told from it by id.
+    this.tabs?.start();
     // The socket opens alongside the snapshot request: `sub` goes out as soon as the snapshot is in.
     this.wire.connect();
     if (!this.based) await this.snapshot(true);
@@ -1325,6 +1366,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
       if (saved.vw) this.views.load(saved.vw);
       if (saved.fs) this.feeds.restore(saved.fs);
       this.based = true;
+      this.tabs?.based(saved.s);
       this.replayPending();
       this.ready();
     });
@@ -1390,6 +1432,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
         this.putWorkspace(m.ws);
         this.lastSyncId = m.s;
         this.based = true;
+        this.tabs?.based(m.s);
         // Replay first: it rebuilds the shadows from the new rows, so settling an acked edit restores the snapshot's
         // value; settled first, it would patch the new row with the value from before the edit.
         this.replayPending();
@@ -1546,7 +1589,10 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
       // The server would not read the frame. Sent again it would close the socket again, for good, with every change
       // behind it waiting. Enqueue checks the size, so this is one from before that check, in the queue on disk.
       const tx = code === CLOSE_TOO_BIG ? this.pending.find(tooBig) : undefined;
-      if (tx) this.refuse(tx, "too_large", "this change is too large to save");
+      if (tx) {
+        this.refuse(tx, "too_large", "this change is too large to save");
+        this.tabs?.fromServer({ t: "rej", id: tx.id, code: "too_large", msg: "this change is too large to save" });
+      }
       return false;
     }
     return true;
@@ -1554,6 +1600,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
 
   /** The socket is gone: what this connection was tracking goes with it. */
   down(): void {
+    this.tabs?.linkDown();
     this.sentAt.clear();
     this.caughtUp = false;
     clearTimeout(this.ackTimer);
@@ -1576,6 +1623,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
   private readonly onOffline = () => this.wire.lost();
 
   onFrame(f: ServerFrame): void {
+    this.tabs?.fromServer(f);
     switch (f.t) {
       case "hello":
         if (f.v !== PROTOCOL_VERSION) return this.reload();
@@ -1609,6 +1657,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
         return this.resync();
       case "caught-up":
         this.caughtUp = true;
+        this.tabs?.current();
         return this.feeds.confirm();
     }
   }
@@ -1623,7 +1672,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
 
   /** Everything unconfirmed, in order; the server tells repeats by their id. */
   private sendQueue(): void {
-    for (const tx of this.pending) if (tx.s === undefined) this.sendTx(tx);
+    if (this.leading) for (const tx of this.pending) if (tx.s === undefined) this.sendTx(tx);
     this.inbox.request();
     this.views.request();
   }
@@ -1637,6 +1686,57 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
     if (this.resubbing) return;
     this.resubbing = true;
     this.send({ t: "sub", ws: this.slug, s: this.lastSyncId });
+  }
+
+  // ── Tabs (tabs.ts) ──────────────────────────────────────────────────────────────────────────────────────────
+
+  get live(): boolean {
+    return this.wire.live;
+  }
+
+  get current(): boolean {
+    return this.based && this.caughtUp;
+  }
+
+  toServer(f: ClientFrame): void {
+    this.wire.send(f);
+  }
+
+  adopt(q: QueuedTx, tab: string): void {
+    if (this.disposed || this.pending.some((t) => t.id === q.id)) return;
+    // Another person's change (someone else signed in in another tab): not this person's to show or to send.
+    if (q.by !== undefined && this.otherPerson(q.by)) return;
+    const tx: PendingTx = { id: q.id, n: ++this.seq, ops: q.ops, tab, ...(q.at ? { at: q.at } : {}), ...(q.by ? { by: q.by } : {}) };
+    runInAction(() => {
+      for (const op of tx.ops) this.applyOp(op, tx.at ?? new Date().toISOString());
+      this.pending.push(tx);
+      this.track(tx, 1);
+    });
+    this.watchStall();
+    if (this.sending) this.sendTx(tx);
+  }
+
+  replaced(old: string, q: QueuedTx, tab: string): void {
+    const was = this.pending.find((t) => t.id === old);
+    if (was) runInAction(() => this.removeTx(was, false));
+    this.adopt(q, tab);
+  }
+
+  ownQueue(): QueuedTx[] {
+    return this.pending.filter((t) => !t.tab).map(stored);
+  }
+
+  orphaned(tab: string): void {
+    for (const t of this.pending) {
+      if (t.tab !== tab) continue;
+      delete t.tab;
+      // That tab may have failed to write it: written again, it survives this one closing too.
+      this.keep(t);
+    }
+  }
+
+  reconnect(): void {
+    this.wire.restart();
   }
 
   belongsTo(userId: string): boolean {
@@ -1660,6 +1760,8 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
   private stop(code: ErrorCode, message: string): void {
     clearTimeout(this.snapshotTimer);
     this.snapshotTimer = undefined;
+    // Another tab takes the lead and meets the same answer itself.
+    this.tabs?.dispose();
     this.wire.close();
     const gone = code === "forbidden" || code === "not_found";
     runInAction(() => {
@@ -1699,6 +1801,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost {
     g.removeEventListener?.("focus", this.onWake);
     g.removeEventListener?.("pageshow", this.onWake);
     (g.document as Listens | undefined)?.removeEventListener?.("visibilitychange", this.onWake);
+    this.tabs?.dispose();
     this.wire.close();
     this.db?.close();
     this.db = null;

@@ -86,13 +86,14 @@ export class Link {
   /** When the ping now unanswered went out. Any frame ends the wait for it, so a second one can go before its pong. */
   private pingAt: number | null = null;
   private readonly url: string;
-  private readonly WS: (new (url: string) => SocketLike) | undefined;
+  private readonly open: ((url: string) => SocketLike) | undefined;
   private readonly backoff: readonly [number, number];
   private readonly host: LinkHost;
 
-  constructor(url: string, WS: (new (url: string) => SocketLike) | undefined, times: Partial<LinkTimes> | undefined, backoff: readonly [number, number], host: LinkHost) {
+  /** `open` makes the socket: a WebSocket, or in a tab that is not the leader, the leader through the channel (tabs.ts). */
+  constructor(url: string, open: ((url: string) => SocketLike) | undefined, times: Partial<LinkTimes> | undefined, backoff: readonly [number, number], host: LinkHost) {
     this.url = url;
-    this.WS = WS;
+    this.open = open;
     this.times = { ...DEFAULT_LINK, ...times };
     this.backoff = backoff;
     this.host = host;
@@ -100,9 +101,9 @@ export class Link {
   }
 
   connect(): void {
-    if (this.host.disposed || !this.WS) return;
+    if (this.host.disposed || !this.open) return;
     this.host.setConnection("connecting");
-    const ws = new this.WS(this.url);
+    const ws = this.open(this.url);
     this.socket = ws;
     this.sockets++;
     this.live = false;
@@ -168,6 +169,24 @@ export class Link {
     const ws = this.socket;
     this.dropped();
     ws?.close();
+  }
+
+  /** Another socket at once, with no backoff: the tab became the leader, stopped being it, or the leader is back. */
+  restart(): void {
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    const ws = this.socket;
+    if (ws) {
+      ws.onmessage = ws.onclose = null;
+      try {
+        ws.close();
+      } catch (e) {
+        warn(e);
+      }
+      this.dropped();
+    }
+    this.retry = 0;
+    this.connect();
   }
 
   private scheduleReconnect(): void {
