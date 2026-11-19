@@ -678,6 +678,9 @@ importers:
       '@rsva/fixtures':
         specifier: workspace:*
         version: link:../fixtures
+      '@rsva/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@rsva/schema':
         specifier: workspace:*
         version: link:../../packages/schema

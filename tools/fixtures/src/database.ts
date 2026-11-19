@@ -10,8 +10,6 @@ import { join, resolve } from "node:path";
 import postgres from "postgres";
 import type { PresetName } from "./generate.ts";
 
-/** A preset of generate.ts or the README demo workspace (demo.ts). */
-type Preset = PresetName | "demo";
 
 const ROOT = resolve(import.meta.dirname, "../../..");
 const DEFAULT_URL = "postgres://rsva:rsva@127.0.0.1:5438/rsva_test";
@@ -25,9 +23,10 @@ export interface FixtureDatabase {
 
 /**
  * Recreates `name` on the Postgres of DATABASE_URL (the compose one when unset), migrates it and imports the preset's
- * workspace under `slug` (apps/server/src/cli/import.ts, as the Perf workflow does).
+ * workspace under `slug` (apps/server/src/cli/import.ts, as the Perf workflow does). Without a preset the database stays
+ * empty: the server migrates it when it starts (the demo, which seeds itself).
  */
-export async function fixtureDatabase(name: string, preset: Preset, slug: string): Promise<FixtureDatabase> {
+export async function fixtureDatabase(name: string, preset: PresetName | null, slug = ""): Promise<FixtureDatabase> {
   if (!/^[a-z0-9_]+_test$/.test(name)) throw new Error(`refusing to recreate database "${name}": its name must end in _test`);
   const base = new URL(process.env.DATABASE_URL ?? DEFAULT_URL);
   const admin = new URL(base);
@@ -50,6 +49,7 @@ export async function fixtureDatabase(name: string, preset: Preset, slug: string
     await sql`select pg_advisory_lock(hashtext(${name}))`;
     await sql.unsafe(`drop database if exists ${name} with (force)`);
     await sql.unsafe(`create database ${name}`);
+    if (!preset) return { url: url.href, drop };
     const bundle = join(dir, "bundle.ndjson");
     execFileSync(process.execPath, [join(ROOT, "tools/fixtures/src/cli.ts"), preset, "--slug", slug, "--out", bundle], { env, stdio: "inherit" });
     execFileSync(process.execPath, [join(ROOT, "apps/server/src/cli/import.ts"), bundle], { env, stdio: ["ignore", "ignore", "inherit"] });

@@ -5,19 +5,19 @@
 //   assets/gallery/phone-<light|dark>.png               two phone screens side by side, 1270×760
 //   assets/navigation.mp4, assets/navigation.gif        a walk through the app, under 10 s (needs ffmpeg)
 // DEMO_OUT changes the folder, DEMO_ONLY=list,board takes only those screens. The server and the database go away at
-// the end. The faces and names are the made-up team's: tools/fixtures/src/demo.ts.
+// the end. The faces and names are the made-up team's: apps/server/src/demo/lumen.ts.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { signInCookies } from "@rsva/fixtures/server";
-import { DEMO_SLUG } from "@rsva/fixtures/demo";
+import { DEMO } from "@rsva/protocol";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { startDemo } from "./demo.ts";
 import { ROOT } from "./report.ts";
 
 const OUT = process.env.DEMO_OUT ?? join(ROOT, "assets");
 const ONLY = process.env.DEMO_ONLY?.split(",");
-const WS = `/${DEMO_SLUG}`;
+const WS = `/${DEMO.slug}`;
 type Scheme = "light" | "dark";
 /**
  * Product Hunt's gallery wants 1270×760, but the header of a project page needs about 1400 CSS pixels to show its title

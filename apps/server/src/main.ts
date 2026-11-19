@@ -9,6 +9,7 @@ import { sweepEmailChanges } from "./auth/email-change.ts";
 import { sweepDevices } from "./auth/devices.ts";
 import { sweepSessions } from "./auth/sessions.ts";
 import { migrateDb, sql } from "./db.ts";
+import { checkDemo, demoMode, demoResets, seedDemo } from "./demo/demo.ts";
 import { loadStatic, type StaticFile } from "./static.ts";
 import { sweepTrash } from "./sync/purge.ts";
 import { sweepCycles } from "./sync/rollover.ts";
@@ -21,6 +22,8 @@ const host = process.env.HOST ?? "127.0.0.1";
 const webDist = resolve(process.env.WEB_DIST ?? new URL("../../web/dist", import.meta.url).pathname);
 
 await migrateDb();
+// The public demo runs on a database of its own and sends nothing (demo/demo.ts): it refuses to start otherwise.
+if (demoMode) await checkDemo(process.env);
 let files = new Map<string, StaticFile>();
 let staticError = false;
 try {
@@ -94,6 +97,11 @@ const hourly = () => {
     .finally(() => (sweeping = false));
 };
 setInterval(hourly, 3_600_000).unref();
+
+if (demoMode) {
+  if (await seedDemo(app)) app.log.info("the demo workspace is seeded");
+  demoResets(app.log);
+}
 
 await app.listen({ port, host });
 hourly();

@@ -4,7 +4,8 @@
 // by the guard (guard.ts), and a cookie-authenticated write without an Origin header is refused here (requireActor).
 // Browsers send Origin on every POST, PATCH and DELETE and on WebSocket, so a token in the page is not needed
 // (docs/decisions/0009-sign-in.md).
-import type { AccountMe, AccountSecurity, TerminalCode, TerminalSession } from "@rsva/protocol";
+import { DEMO, type AccountMe, type AccountSecurity, type DemoInfo, type TerminalCode, type TerminalSession } from "@rsva/protocol";
+import { demoMode, enterDemo } from "../demo/demo.ts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { accountPatch, readSettings, updateAccount } from "./account.ts";
@@ -171,6 +172,16 @@ export function registerAuthRoutes(app: FastifyInstance, mailer: Mailer, telegra
     return reply
       .header("set-cookie", [...sessionCookies(s.token, s.expiresAt, req.headers.origin), deviceCookie(device.token, req.headers.origin)])
       .send({ user: u, passkeys, mayCreateWorkspaces: await mayCreateWorkspaces(u.email) });
+  }
+
+  // The public demo (demo/demo.ts): a visitor walks in with no sign-up, as a person of their own. Only there.
+  if (demoMode) {
+    const demoByIp = new Limiter(10, 60 * MIN);
+    app.get("/auth/demo", async (): Promise<DemoInfo> => ({ workspace: DEMO.slug }));
+    app.post("/auth/demo", async (req, reply) => {
+      limit(demoByIp, clientKey(req.ip));
+      return signIn(req, reply, await enterDemo(), "code");
+    });
   }
 
   // Step 1: a code to the email. The answer is the same for any address and comes before the mail is sent, so neither

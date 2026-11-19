@@ -18,6 +18,8 @@ import { TabBar } from "./screens/tab-bar.tsx";
 import { viewPanel } from "./screens/view-panel-state.ts";
 import "./shortcuts.ts";
 import { currentWs, NO_WS, store } from "./store.ts";
+import { DemoBar } from "./screens/demo-bar.tsx";
+import { DEMO } from "@rsva/protocol";
 import { workspacePath, workspaces } from "./workspaces.ts";
 import { Link } from "./link.tsx";
 
@@ -94,9 +96,12 @@ export const App = observer(function App() {
   }
   const activeKey = routeProject(route);
   const settings = SETTINGS_PAGE[route.name];
-  return (
+  // A visitor of the public demo sees a line above the app saying what this is (apps/server/src/demo).
+  const visitor = store.me?.email.endsWith(`@${DEMO.emailDomain}`) ?? false;
+  const height = "h-dvh max-md:h-[calc(100dvh-var(--keyboard))]";
+  const shell = (
     // Keyed by workspace: a switch remounts every screen on the new engine (store.ts).
-    <div key={ws} className="flex h-dvh overflow-hidden md:gap-(--pane-gap) md:bg-(--pane-frame) md:p-(--pane-inset) max-md:h-[calc(100dvh-var(--keyboard))] max-md:flex-col max-md:bg-panel max-md:pt-(--safe-top) max-md:pr-(--safe-right) max-md:pl-(--safe-left)">
+    <div key={ws} className={`flex overflow-hidden md:gap-(--pane-gap) md:bg-(--pane-frame) md:p-(--pane-inset) max-md:flex-col max-md:bg-panel max-md:pr-(--safe-right) max-md:pl-(--safe-left) ${visitor ? "min-h-0 flex-1" : `${height} max-md:pt-(--safe-top)`}`}>
       <LoadWorkspaces ws={ws} />
       <AccountAddress route={route} />
       {/* The workspace's settings have their own navigation in the sidebar's place. */}
@@ -132,6 +137,14 @@ export const App = observer(function App() {
       <SaveNotice />
       <Overlays />
     </div>
+  );
+  return visitor ? (
+    <div className={`flex flex-col ${height}`}>
+      <DemoBar />
+      {shell}
+    </div>
+  ) : (
+    shell
   );
 });
 

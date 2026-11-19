@@ -1,13 +1,13 @@
-// The demo workspace of the README and the Product Hunt gallery (RSVA-587): a made-up team "Lumen" with three projects,
-// forty issues, a few comments and agent members, as an import bundle (packages/schema/src/bundle.ts). Names are
-// invented and the addresses are example.com ones. What a bundle cannot carry (cycles, an agent's delegation) is added
-// through the API by tools/perf/src/demo.ts. Dates are relative to `now`, so the cycle is always in progress.
-import postgres from "postgres";
+// The demo workspace of the public demo, the README and the Product Hunt gallery (RSVA-587): a made-up team "Lumen" with
+// three projects, forty issues, a few comments and agent members, as an import bundle (packages/schema/src/bundle.ts).
+// Names are invented and the addresses are example.com ones. What a bundle cannot carry (cycles, an agent's delegation)
+// is added through the API by seed.ts. Dates are relative to `now`, so the cycle is always in progress.
+import { DEMO } from "@rsva/protocol";
+import type { Sql } from "postgres";
 import type { BundleComment, BundleHeader, BundleIssue, BundleLabel, BundleLine, BundleLink, BundleProject, BundleState, BundleUser } from "@rsva/schema/bundle";
 
 const DAY = 86_400_000;
 
-export const DEMO_SLUG = "lumen";
 /** Who the demo is seen as, and the two agents. */
 export const DEMO_OWNER = "maya@example.com";
 export const DEMO_AGENTS = { atlas: "atlas@example.com", relay: "relay@example.com" } as const;
@@ -173,7 +173,7 @@ export function demo(now: number = Date.now()): (BundleHeader | BundleLine)[] {
     createdAt: ago(days),
   }));
 
-  const header: BundleHeader = { m: "Bundle", version: 1, source: "demo", workspace: { slug: DEMO_SLUG, name: "Lumen" }, owner: { ext: "u-maya" } };
+  const header: BundleHeader = { m: "Bundle", version: 1, source: "demo", workspace: { slug: DEMO.slug, name: "Lumen" }, owner: { ext: "u-maya" } };
   return [header, ...users, ...projects, ...states, ...labels, ...issues, ...links, ...comments];
 }
 
@@ -196,28 +196,24 @@ const FINISHED: Record<string, number> = Object.fromEntries(DEMO_FINISHED);
 /**
  * The cycles were filled and the issues finished through the API just now, so the log says everything happened today. The
  * burn-up reads the log (apps/server/src/sync/cycles.ts): this puts the cycle assignments and the delegations at the cycle's start and each
- * finish on its day. The only SQL of the demo; the server is stopped while it runs.
+ * finish on its day. The only SQL of the demo; it runs before the server listens (seed.ts).
  */
-export async function backdateDemo(databaseUrl: string): Promise<void> {
-  const db = postgres(databaseUrl, { max: 1, onnotice: () => {} });
-  try {
-    const at = (daysAgo: number, hour: number) => {
-      const d = new Date(Date.now() - daysAgo * DAY);
-      d.setUTCHours(hour, 0, 0, 0);
-      return d;
-    };
-    const cycleStart = at(6, 9);
-    await db`update sync_action set created_at = ${cycleStart}
-      where model = 'Issue' and (data->>'cycleId' in (select id::text from cycle where start_date < current_date) or data ? 'delegateId')`;
-    for (const [key, daysAgo] of DEMO_FINISHED) {
-      const [project, number] = key.split("-") as [string, string];
-      const when = at(daysAgo, 11 + (Number(number) % 5));
-      const target = db`(select i.id from issue i join project p on p.id = i.project_id where p.key = ${project} and i.number = ${Number(number)})`;
-      await db`update sync_action set created_at = ${when} where model = 'Issue' and model_id = ${target} and data ? 'stateId'`;
-      await db`update issue set completed_at = ${when} where id = ${target}`;
-    }
-  } finally {
-    await db.end();
+export async function backdateDemo(db: Sql, workspaceId: string): Promise<void> {
+  const at = (daysAgo: number, hour: number) => {
+    const d = new Date(Date.now() - daysAgo * DAY);
+    d.setUTCHours(hour, 0, 0, 0);
+    // A string: the server's client takes no Date (db.ts).
+    return d.toISOString();
+  };
+  const cycleStart = at(6, 9);
+  await db`update sync_action set created_at = ${cycleStart}
+    where workspace_id = ${workspaceId} and model = 'Issue' and (data->>'cycleId' in (select id::text from cycle where start_date < current_date) or data ? 'delegateId')`;
+  for (const [key, daysAgo] of DEMO_FINISHED) {
+    const [project, number] = key.split("-") as [string, string];
+    const when = at(daysAgo, 11 + (Number(number) % 5));
+    const target = db`(select i.id from issue i join project p on p.id = i.project_id where p.workspace_id = ${workspaceId} and p.key = ${project} and i.number = ${Number(number)})`;
+    await db`update sync_action set created_at = ${when} where model = 'Issue' and model_id = ${target} and data ? 'stateId'`;
+    await db`update issue set completed_at = ${when} where id = ${target}`;
   }
 }
 
