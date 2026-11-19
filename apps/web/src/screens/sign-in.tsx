@@ -25,6 +25,7 @@ import { Button } from "@rsva/ui/components/button";
 import { NativeInput as Input } from "@rsva/ui/components/native-input";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { signedInAs } from "../auth.ts";
+import { isDemo } from "../lib/demo.ts";
 import { dismissed, passkeysSupported, signedIn } from "../lib/signed-in.ts";
 import { isAccountRoute, router, routePath } from "../router.ts";
 import { workspacePath, workspaces } from "../workspaces.ts";
@@ -115,7 +116,9 @@ export function SignIn({
   // The public demo (apps/server/src/demo) lets a visitor in with no sign-up; anywhere else the answer is a 404.
   useEffect(() => {
     if (confirm || email || step.name !== "email") return;
-    void fetch("/auth/demo").then((r) => r.ok && setStep((s) => (s.name === "email" ? { name: "demo" } : s)), () => undefined);
+    void fetch("/auth/demo")
+      .then(isDemo)
+      .then((demo) => demo && setStep((s) => (s.name === "email" ? { name: "demo" } : s)), () => undefined);
   }, []);
 
   // Passkeys in the email field's autofill, while the email step is on screen.
