@@ -175,7 +175,8 @@ export type Op =
   | { op: "delete"; m: "Attachment"; id: string }
   /**
    * The whole description; `id` is the issue's. `base` is the transaction that made the text this one was edited from
-   * (null: no save yet): another text in between is refused as `conflict`, not overwritten. Without it the last write wins.
+   * (null: no save yet): another text in between is merged with this one (ADR 0057), or, when the base's text is no longer
+   * kept, refused as `conflict`, not overwritten. Without it the last write wins.
    */
   | { op: "update"; m: "Document"; id: string; set: { doc: DocJSON }; base?: string | null }
   /** Workspace settings; `id` is the workspace's. */

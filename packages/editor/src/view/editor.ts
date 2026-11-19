@@ -52,6 +52,11 @@ export interface EditorHandle {
   getDoc(): DocNode;
   /** Replaces the content (a change from elsewhere); keeps the caret near where it was. Undo history starts over. */
   setDoc(doc: DocNode | null): void;
+  /**
+   * Takes a text from elsewhere in place: only the part that differs is replaced, so the caret and selection move with
+   * the text around them and undo keeps the person's own steps. Not reported to onChange: nothing of theirs to save.
+   */
+  takeDoc(doc: DocNode): void;
   isEmpty(): boolean;
   focus(at?: "start" | "end"): void;
   run(c: Cmd): boolean;
@@ -86,6 +91,9 @@ export interface EditorHandle {
 // A stored description with a collapsible section opens with it opened out, and is saved so on its next edit (doc.ts).
 const toNode = (doc: DocNode | null) => Node.fromJSON(schema, doc ? withoutSections(doc) : emptyDoc());
 
+/** Marks a transaction that brings in a text from elsewhere (takeDoc). */
+const TAKEN = "rsva:taken";
+
 export function createEditor(mount: HTMLElement, o: EditorOptions): EditorHandle {
   let menuKeys: ((e: KeyboardEvent) => boolean) | null = null;
   const make = (doc: DocNode | null) =>
@@ -108,7 +116,7 @@ export function createEditor(mount: HTMLElement, o: EditorOptions): EditorHandle
     attributes: { class: "rich-text", spellcheck: "true" },
     dispatchTransaction(tr) {
       view.updateState(view.state.apply(tr));
-      if (tr.docChanged) o.onChange?.();
+      if (tr.docChanged && !tr.getMeta(TAKEN)) o.onChange?.();
       o.onUpdate?.();
     },
     handleDOMEvents: {
@@ -149,6 +157,23 @@ export function createEditor(mount: HTMLElement, o: EditorOptions): EditorHandle
       const pos = Math.min(at, state.doc.content.size);
       view.updateState(state.apply(state.tr.setSelection(Selection.near(state.doc.resolve(pos)))));
       o.onUpdate?.();
+    },
+    takeDoc(doc) {
+      const next = toNode(doc);
+      const cur = view.state.doc;
+      const start = cur.content.findDiffStart(next.content);
+      if (start === null) return;
+      let { a: endA, b: endB } = cur.content.findDiffEnd(next.content)!;
+      // The two ends may cross where the change repeats what is around it ("aa" → "aaa"): widen both alike.
+      const over = start - Math.min(endA, endB);
+      if (over > 0) {
+        endA += over;
+        endB += over;
+      }
+      let tr = view.state.tr.replace(start, endA, next.slice(start, endB));
+      // A slice that does not fit where it goes is fitted, which may not give this text: then the whole of it.
+      if (!tr.doc.eq(next)) tr = view.state.tr.replaceWith(0, cur.content.size, next.content);
+      view.dispatch(tr.setMeta("addToHistory", false).setMeta(TAKEN, true));
     },
     isEmpty() {
       const d = view.state.doc;

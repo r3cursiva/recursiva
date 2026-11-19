@@ -266,6 +266,27 @@ export const document = pgTable("document", {
 });
 
 /**
+ * The text each save of a description was made with, as its author sent it, under the save's transaction; `NO_SAVE_TX`
+ * holds the text before the first save. A save made from an older text merges against it (ADR 0057, write.ts,
+ * updateDocument). Server-only: never in a snapshot or the log. A week of them, the newest 100 of a document.
+ */
+export const documentVersion = pgTable(
+  "document_version",
+  {
+    documentId: uuid()
+      .notNull()
+      .references(() => document.id, { onDelete: "cascade" }),
+    txId: uuid().notNull(),
+    doc: jsonb().$type<DocJSON>().notNull(),
+    createdAt: ts().notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.documentId, t.txId] }), index().on(t.documentId, t.createdAt)],
+);
+
+/** The key of the text a description had before its first save: the `base` a client sends as null. */
+export const NO_SAVE_TX = "00000000-0000-0000-0000-000000000000";
+
+/**
  * Comment on an issue. Not part of the workspace snapshot: loaded with the issue's history when the issue is opened
  * (GET /sync/history/:issueId), then kept live by deltas. Replies are one level deep: `parentId` is a top-level
  * comment of the same issue. Deleting keeps the row as a tombstone (empty body, `deletedAt`) so a thread keeps its

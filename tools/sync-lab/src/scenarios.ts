@@ -353,7 +353,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "two.description",
-    title: "both rewrite a description: the loser is told, nobody's text vanishes in silence",
+    title: "both rewrite a description offline: the texts merge, both stay, nobody is refused",
     async run(lab) {
       const { a, b } = lab;
       const i = await issue(lab);
@@ -363,7 +363,8 @@ export const SCENARIOS: Scenario[] = [
       b.store.updateDescription(i.id, doc("text from B"));
       await backInTurn(lab);
       assert.equal(docText(a, i.id), docText(b, i.id), `both show one text`);
-      assert.ok(a.store.lastRejection || b.store.lastRejection, "someone's text was replaced and nobody was told");
+      for (const words of ["text from A", "text from B"]) assert.ok(docText(a, i.id).includes(words), `${words} stays`);
+      assert.equal(a.store.lastRejection ?? b.store.lastRejection, null, "a merge refuses nobody");
     },
   },
   {

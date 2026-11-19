@@ -144,7 +144,8 @@ export function sameDoc(a: DocNode | null | undefined, b: DocNode | null | undef
   return canonical(a ?? emptyDoc()) === canonical(b ?? emptyDoc());
 }
 
-function canonical(n: unknown): string {
+/** A node as a string, equal for equal nodes whatever their key order: what merge.ts compares. */
+export function canonical(n: unknown): string {
   if (Array.isArray(n)) return `[${n.map(canonical).join(",")}]`;
   if (n && typeof n === "object") {
     return `{${Object.keys(n)

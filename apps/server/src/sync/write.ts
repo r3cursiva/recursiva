@@ -10,7 +10,8 @@
 import { randomUUID } from "node:crypto";
 import { deniedGuardedChange, deniedState, deniedStateUpdate, isProposalLabel, isRole, mayDeleteIssue, mayManage, PEOPLE_LABELS, PEOPLE_STATES, readsAs, type GuardActor, type Guarded } from "@rsva/policy";
 import { ISSUE_LISTS, type Action, type CommentCreate, type ListBase, type Op, type ReactionCreate, type Via } from "@rsva/protocol";
-import { MENTION_SCHEME, mentionIds, sameDoc, type DocNode } from "@rsva/editor/doc";
+import { emptyDoc, MENTION_SCHEME, mentionIds, sameDoc, type DocNode } from "@rsva/editor/doc";
+import { mergeDocs } from "@rsva/editor/merge";
 import { fromMarkdown } from "@rsva/editor/markdown";
 import { DocError, validateDoc } from "@rsva/editor/validate";
 import { COMMENT_MAX, FILES_PER_ISSUE_MAX, ISSUE_EDITABLE, RELATIONS_MAX, SHA256, TITLE_MAX, URL_MAX, cleanName, cleanUrl, filePath, isClosedGroup, isFileCreate, issueKey, moveLabels, moveState, readLink, type AttachmentCreate, type AttachmentPatch, type DocJSON, type Equal, type FileCreate, type Issue, type IssuePatch, type IssueUpdate } from "@rsva/schema/models";
@@ -33,7 +34,7 @@ import { created, diff, lockOwned, lockWorkspace } from "./rows.ts";
 import { notifyChanged } from "../notify/run.ts";
 import { TxError, type Pending } from "./tx-error.ts";
 
-const { workspace, member, user, project, workflowState, label, issue, document, comment, reaction, attachment, blob, syncAction, appliedTx } = schema;
+const { workspace, member, user, project, workflowState, label, issue, document, documentVersion, comment, reaction, attachment, blob, syncAction, appliedTx, NO_SAVE_TX } = schema;
 
 const uuid = z.uuid();
 const day = z.iso.date();
@@ -926,10 +927,11 @@ const scrubCommentText = (tx: Tx, workspaceId: string, id: string) => forgetText
  * however often it is saved. The issue's updatedAt moves too (the list sorts by it); the Document action carries it and
  * clients apply it to the issue.
  *
- * A save that says which text it was edited from (`base`, a transaction) is refused if the text has moved on: two people
- * editing at once would otherwise lose one's text without a word. The action carries its transaction as `tx`, so the next
- * save can name it. A save with no `base` (the agent API) replaces what is there. Until Yjs merges texts, the refused
- * person keeps theirs in the refusal (client.ts, lastRejection).
+ * A save that says which text it was edited from (`base`, a transaction) and finds the text moved on since merges with it
+ * (ADR 0057): the text of `base`, kept in document_version, is the common ancestor, and both edits stay (editor/merge.ts).
+ * Only when that text is no longer kept, or no valid merge exists, is the save refused as before, and its author keeps
+ * the text in the refusal (client.ts, lastRejection). The action carries its transaction as `tx`, so the next save can
+ * name it. A save with no `base` (the agent API) replaces what is there.
  */
 export async function updateDocument(tx: Tx, workspaceId: string, txId: string, op: Extract<Op, { m: "Document" }>): Promise<Pending | null> {
   const { id, base } = op;
@@ -943,24 +945,54 @@ export async function updateDocument(tx: Tx, workspaceId: string, txId: string, 
   }
   const [row] = await tx.select({ doc: document.doc }).from(document).where(and(eq(document.id, id), eq(document.workspaceId, workspaceId))).for("update");
   if (!row) await issueInWorkspace(tx, workspaceId, id); // an issue without a row yet gets one below
-  else if (sameDoc(row.doc as DocNode | null, doc)) return null;
-  if (base !== undefined) {
-    const [last] = await tx.select({ id: syncAction.id, tx: syncAction.txId }).from(syncAction).where(and(eq(syncAction.workspaceId, workspaceId), eq(syncAction.modelId, id), eq(syncAction.model, "Document"))).orderBy(desc(syncAction.id)).limit(1);
-    if ((last?.tx ?? null) !== base) {
-      // A save of the same text writes no action, and the next one names it: no conflict if the text has stood since.
-      const [named] = base ? await tx.select({ s: appliedTx.lastSyncId }).from(appliedTx).where(and(eq(appliedTx.txId, base), eq(appliedTx.workspaceId, workspaceId))) : [];
-      if (!named || named.s < (last?.id ?? 0)) throw new TxError("conflict", "someone else changed the description meanwhile");
-    }
+  const current = (row?.doc as DocNode | null | undefined) ?? null;
+  const [last] = await tx.select({ id: syncAction.id, tx: syncAction.txId }).from(syncAction).where(and(eq(syncAction.workspaceId, workspaceId), eq(syncAction.modelId, id), eq(syncAction.model, "Document"))).orderBy(desc(syncAction.id)).limit(1);
+  let next = doc;
+  const from = base === undefined ? null : await textOf(tx, id, base);
+  if (from) {
+    // Even when the base is the last save: that save may have been merged, and this one stands on its author's text.
+    const merged = mergeDocs(from, doc, current ?? emptyDoc());
+    if (!merged) throw new TxError("conflict", "someone else changed the description meanwhile");
+    next = merged;
+  } else if (base !== undefined && (last?.tx ?? null) !== base) {
+    // A text no longer kept: as before versions were. A save of the same text writes no action, and the next one names
+    // it: no conflict if the text has stood since.
+    const [named] = base ? await tx.select({ s: appliedTx.lastSyncId }).from(appliedTx).where(and(eq(appliedTx.txId, base), eq(appliedTx.workspaceId, workspaceId))) : [];
+    if (!named || named.s < (last?.id ?? 0)) throw new TxError("conflict", "someone else changed the description meanwhile");
+  }
+  // What this save was made with, for a save made from it later; before the first save, the text there was.
+  const keep = () => keepTexts(tx, id, [...(last ? [] : [{ txId: NO_SAVE_TX, doc: current ?? emptyDoc() }]), { txId, doc }]);
+  if (row && sameDoc(current, next)) {
+    await keep();
+    return null;
   }
   const [after] = await tx
     .insert(document)
-    .values({ id, workspaceId, html: "", doc: doc as DocJSON })
-    .onConflictDoUpdate({ target: document.id, set: { doc: doc as DocJSON, updatedAt: dsql`now()` } })
+    .values({ id, workspaceId, html: "", doc: next as DocJSON })
+    .onConflictDoUpdate({ target: document.id, set: { doc: next as DocJSON, updatedAt: dsql`now()` } })
     .returning({ updatedAt: document.updatedAt });
+  await keep();
   await tx.update(issue).set({ updatedAt: after!.updatedAt }).where(eq(issue.id, id));
   await forgetText(tx, workspaceId, dsql`values ('Document', ${id}::uuid)`);
-  const mentions = await newMentions(tx, workspaceId, doc, (row?.doc as DocNode | null | undefined) ?? null);
-  return { m: "Document", mid: id, a: "U", d: { issueId: id, doc, updatedAt: after!.updatedAt, tx: txId, ...mentions } };
+  const mentions = await newMentions(tx, workspaceId, next, current);
+  return { m: "Document", mid: id, a: "U", d: { issueId: id, doc: next, updatedAt: after!.updatedAt, tx: txId, ...mentions } };
+}
+
+/** Texts kept per description: a week of saves, the newest 100 at most; older bases are refused as before. */
+const VERSIONS_KEPT = 100;
+const VERSIONS_DAYS = 7;
+
+/** The text a save was made from: its base's, or before any save the text there was; null once no longer kept. */
+async function textOf(tx: Tx, id: string, base: string | null): Promise<DocNode | null> {
+  const [v] = await tx.select({ doc: documentVersion.doc }).from(documentVersion).where(and(eq(documentVersion.documentId, id), eq(documentVersion.txId, base ?? NO_SAVE_TX)));
+  return (v?.doc as DocNode | undefined) ?? null;
+}
+
+/** Keeps texts under their transactions (after the document row, which they refer to) and drops what is past the limits. */
+async function keepTexts(tx: Tx, id: string, texts: Array<{ txId: string; doc: DocNode }>): Promise<void> {
+  await tx.insert(documentVersion).values(texts.map((t) => ({ documentId: id, txId: t.txId, doc: t.doc as DocJSON }))).onConflictDoNothing();
+  await tx.execute(dsql`delete from document_version where document_id = ${id}::uuid and (created_at < now() - make_interval(days => ${VERSIONS_DAYS})
+    or tx_id not in (select tx_id from document_version where document_id = ${id}::uuid order by created_at desc, tx_id desc limit ${VERSIONS_KEPT}))`);
 }
 
 // ── Mentions ──────────────────────────────────────────────────────────────────────────────────────────────────
