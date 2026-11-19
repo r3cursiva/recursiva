@@ -11,6 +11,8 @@
 //
 // In memory, per process: a restart forgets them, which is fine for a rate (it is not a quota).
 
+import { demoMode } from "../demo/mode.ts";
+
 /** A bucket of `perMinute` units per key, full at the start and refilled at that rate. */
 export class Budget {
   private readonly left = new Map<string, { n: number; at: number }>();
@@ -75,6 +77,18 @@ const READ_BYTES_PER_MINUTE = 64 * 2 ** 20;
 
 const ops = new Budget(OPS_PER_MINUTE);
 const writeBytes = new Budget(WRITE_BYTES_PER_MINUTE);
+
+/**
+ * The public demo (demo/mode.ts) on top of those: every entry is a new person with budgets of their own, ten an hour from
+ * one address, so a script would write ten people's worth. A visitor gets 512 KiB a minute (a demo description of a few
+ * KB saved every few seconds is far below it), and all of them together 2 MiB: under 3 GB a day, the size of the demo's
+ * database volume (docs/stand-demo.md), so a flood fills the demo and never the host's disk.
+ */
+const DEMO_WRITE_BYTES_PER_MINUTE = 512 * 2 ** 10;
+const DEMO_ALL_WRITE_BYTES_PER_MINUTE = 2 * 2 ** 20;
+const demoVisitor = new Budget(DEMO_WRITE_BYTES_PER_MINUTE);
+const demoAll = new Budget(DEMO_ALL_WRITE_BYTES_PER_MINUTE);
+const ALL = "all";
 export const reads = new Budget(READ_BYTES_PER_MINUTE);
 
 /**
@@ -84,12 +98,18 @@ export const reads = new Budget(READ_BYTES_PER_MINUTE);
 export function takeWrite(userId: string, opCount: number, bytes: number): boolean {
   const now = Date.now();
   if (ops.available(userId, now) < opCount || writeBytes.available(userId, now) < bytes) return false;
+  if (demoMode && (demoVisitor.available(userId, now) < bytes || demoAll.available(ALL, now) < bytes)) return false;
+  if (demoMode) {
+    demoVisitor.take(userId, bytes, now);
+    demoAll.take(ALL, bytes, now);
+  }
   return ops.take(userId, opCount, now) && writeBytes.take(userId, bytes, now);
 }
 
 /** Seconds until a transaction of this size fits the person's budgets again. */
 export function writeRetryAfter(userId: string, opCount: number, bytes: number): number {
-  return Math.max(ops.retryAfter(userId, opCount), writeBytes.retryAfter(userId, bytes));
+  const demo = demoMode ? Math.max(demoVisitor.retryAfter(userId, bytes), demoAll.retryAfter(ALL, bytes)) : 0;
+  return Math.max(ops.retryAfter(userId, opCount), writeBytes.retryAfter(userId, bytes), demo);
 }
 
 /**

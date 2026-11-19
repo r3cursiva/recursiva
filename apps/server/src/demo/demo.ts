@@ -18,10 +18,6 @@ import { backdateDemo, demo, DEMO_AGENTS, DEMO_CYCLES, DEMO_DELEGATES, DEMO_FINI
 
 const { workspace, user } = schema;
 
-export const demoMode = process.env.RSVA_DEMO === "on";
-
-/** The answer to an upload: the demo's files would be served to every visitor, so it takes none. */
-export const NO_UPLOADS = { error: "forbidden", message: "Files cannot be uploaded in the demo." } as const;
 
 /** How long the demo lives before it starts over, and how often that is checked. */
 const DEMO_LIFE_MS = 24 * 3_600_000;

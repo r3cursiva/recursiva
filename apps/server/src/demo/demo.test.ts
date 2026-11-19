@@ -13,6 +13,7 @@ const { sql } = await import("../db.ts");
 const { buildApp } = await import("../app.ts");
 const { checkDemo, keepDemoDay, seedDemo } = await import("./demo.ts");
 const { importFixture } = await import("../test/helpers.ts");
+const { takeWrite } = await import("../sync/limits.ts");
 
 const app = buildApp({ logLevel: "warn", mailer: async () => {} });
 after(() => app.close());
@@ -80,4 +81,22 @@ test("the demo refuses a database with anything else in it, and mail or Telegram
   await assert.rejects(checkDemo({}), /a database of its own/);
   await assert.rejects(checkDemo({ RESEND_API_KEY: "re_x" }), /sends no mail/);
   await assert.rejects(checkDemo({ TELEGRAM_BOT_TOKEN: "1:x" }), /sends no messages/);
+});
+
+test("in the demo email sign-in is off: its codes would be in the log", async () => {
+  for (const url of ["/auth/code", "/auth/verify", "/auth/link"]) {
+    const r = await app.inject({ method: "POST", url, payload: { email: "maya@example.com", code: "123456", secret: "x".repeat(43) } });
+    assert.equal(r.statusCode, 404, `${url}: ${r.body}`);
+  }
+});
+
+test("a visitor writes 512 KiB a minute, and all visitors together 2 MiB: a flood fills the demo, not the disk", async () => {
+  const KiB = 1024;
+  assert.equal(takeWrite("visitor-a", 1, 600 * KiB), false, "over a visitor's minute at once");
+  assert.equal(takeWrite("visitor-a", 1, 400 * KiB), true);
+  assert.equal(takeWrite("visitor-a", 1, 200 * KiB), false, "the visitor's minute is spent");
+  // New visitors, as a script that walks in again and again: the demo's minute runs out after four more.
+  let passed = 0;
+  for (let i = 0; i < 10; i++) if (takeWrite(`visitor-${i}`, 1, 400 * KiB)) passed++;
+  assert.ok(passed <= 4, `${passed} visitors wrote 400 KiB each`);
 });

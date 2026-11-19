@@ -5,7 +5,8 @@
 // Browsers send Origin on every POST, PATCH and DELETE and on WebSocket, so a token in the page is not needed
 // (docs/decisions/0009-sign-in.md).
 import { DEMO, type AccountMe, type AccountSecurity, type DemoInfo, type TerminalCode, type TerminalSession } from "@rsva/protocol";
-import { demoMode, enterDemo } from "../demo/demo.ts";
+import { enterDemo } from "../demo/demo.ts";
+import { demoMode } from "../demo/mode.ts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { accountPatch, readSettings, updateAccount } from "./account.ts";
@@ -174,6 +175,11 @@ export function registerAuthRoutes(app: FastifyInstance, mailer: Mailer, telegra
       .send({ user: u, passkeys, mayCreateWorkspaces: await mayCreateWorkspaces(u.email) });
   }
 
+  // The demo signs in by "Enter the demo" alone: its mail goes to the log, where a code would be readable (demo/mode.ts).
+  const noEmailInDemo = () => {
+    if (demoMode) throw new HttpError(404, "not_found", "Email sign-in is off in the demo.");
+  };
+
   // The public demo (demo/demo.ts): a visitor walks in with no sign-up, as a person of their own. Only there.
   if (demoMode) {
     const demoByIp = new Limiter(10, 60 * MIN);
@@ -189,6 +195,7 @@ export function registerAuthRoutes(app: FastifyInstance, mailer: Mailer, telegra
   // Step 1: a code to the email. The answer is the same for any address and comes before the mail is sent, so neither
   // its content nor its timing tells whether the address has an account.
   app.post<{ Body: unknown }>("/auth/code", async (req, reply) => {
+    noEmailInDemo();
     const body = parse(z.object({ email }), req.body);
     limit(codesByIp, clientKey(req.ip));
     limit(codesByEmail, body.email.toLowerCase());
@@ -199,6 +206,7 @@ export function registerAuthRoutes(app: FastifyInstance, mailer: Mailer, telegra
 
   // Step 2: the code opens a session.
   app.post<{ Body: unknown }>("/auth/verify", async (req, reply) => {
+    noEmailInDemo();
     const body = parse(z.object({ email, code: z.string().trim().max(10) }), req.body);
     limit(verifyByIp, clientKey(req.ip));
     limit(verifyByEmailIp, `${body.email.toLowerCase()}\n${clientKey(req.ip)}`);
@@ -210,6 +218,7 @@ export function registerAuthRoutes(app: FastifyInstance, mailer: Mailer, telegra
   // Step 2 past the daily cap of wrong codes: the link from the mail (codes.ts). The page reads it from the URL's
   // fragment and posts it here, so it never reaches a request log. Limited like codes; every failure reads the same.
   app.post<{ Body: unknown }>("/auth/link", async (req, reply) => {
+    noEmailInDemo();
     const body = parse(z.object({ email, secret: z.string().regex(LINK_SECRET) }), req.body);
     limit(verifyByIp, clientKey(req.ip));
     limit(verifyByEmailIp, `${body.email.toLowerCase()}\n${clientKey(req.ip)}`);

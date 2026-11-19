@@ -18,7 +18,7 @@ import type { Readable } from "node:stream";
 import { accessBySlug } from "../auth/access.ts";
 import { requireActor } from "../auth/routes.ts";
 import { db, schema } from "../db.ts";
-import { demoMode, NO_UPLOADS } from "../demo/demo.ts";
+import { demoMode, NO_UPLOADS } from "../demo/mode.ts";
 import { uploads } from "../sync/limits.ts";
 import { fileType } from "./sniff.ts";
 import { BlobError, type BlobStore, type ByteRange } from "./store.ts";

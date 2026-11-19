@@ -18,7 +18,7 @@ import { alias } from "drizzle-orm/pg-core";
 import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
 import { db, schema } from "../db.ts";
-import { demoMode, NO_UPLOADS } from "../demo/demo.ts";
+import { demoMode, NO_UPLOADS } from "../demo/mode.ts";
 import { FILE_CSP, IMMUTABLE } from "../files/routes.ts";
 import { imageSize, sniffImage } from "../files/sniff.ts";
 import { uploads } from "../sync/limits.ts";
