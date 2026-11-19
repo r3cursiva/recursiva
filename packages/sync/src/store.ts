@@ -335,8 +335,9 @@ export interface SyncStore {
   description(issueId: string): Document | undefined;
   /**
    * Replaces the description at once, then sends it. `seen`: `tx` of the text the edit started from (`description()`).
-   * If the text moved on meanwhile the server refuses this save, the text here goes back to theirs, and the refused text
-   * is in `lastRejection.lost`: until Yjs merges two edits, neither is overwritten unseen.
+   * If the text moved on meanwhile the server merges this save with it (ADR 0057). Only when it cannot (the text the edit
+   * started from is no longer kept) is the save refused: the text here goes back to theirs and the refused text is in
+   * `lastRejection.lost`, so neither is overwritten unseen.
    */
   updateDescription(issueId: string, doc: DocJSON, seen?: string | null): void;
 

@@ -11,6 +11,7 @@
     "./drag": "./src/drag.ts",
     "./text": "./src/text.ts",
     "./markdown": "./src/markdown.ts",
+    "./merge": "./src/merge.ts",
     "./html": "./src/html.ts",
     "./issue-ref": "./src/issue-ref.ts",
     "./render": "./src/render.ts",

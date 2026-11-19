@@ -89,13 +89,64 @@ test("a save from the text as it stands goes through, and the next names it", as
   await save(id, "second", first);
 });
 
-test("a save from an older text is refused: the other person's words stay", async () => {
+/** The stored description's paragraphs as text. */
+async function texts(id: string): Promise<string[]> {
+  const [d] = await db.select().from(schema.document).where(eq(schema.document.id, id));
+  return ((d!.doc as { content: { content?: { text: string }[] }[] }).content).map((p) => (p.content ?? []).map((t) => t.text).join(""));
+}
+const docOf = (...paragraphs: string[]) => ({ type: "doc", content: paragraphs.map((text) => ({ type: "paragraph", content: [{ type: "text", text }] })) }) as DocJSON;
+const saveDoc = (id: string, d: DocJSON, base: string | null, txId: string = randomUUID()) => tx([{ op: "update", m: "Document", id, set: { doc: d }, base }], txId);
+
+test("a save from an older text merges with the one that got in first: both people's words stay", async () => {
   const id = await newIssue();
   const theirs = randomUUID();
   await save(id, "theirs", null, theirs);
-  await rejects(save(id, "mine, from the empty text", null), "conflict", /someone else changed/);
-  const [d] = await db.select().from(schema.document).where(eq(schema.document.id, id));
-  assert.deepEqual((d!.doc as { content: { content: { text: string }[] }[] }).content[0]!.content[0]!.text, "theirs");
+  const r = await save(id, "mine, from the empty text", null);
+  assert.deepEqual(await texts(id), ["theirs", "mine, from the empty text"]);
+  assert.deepEqual((r.actions[0]!.d!.doc as DocJSON).content?.length, 2, "the action carries the merged text");
+});
+
+test("edits of different paragraphs from one text both stay", async () => {
+  const id = await newIssue();
+  const start = randomUUID();
+  await saveDoc(id, docOf("one", "two", "three"), null, start);
+  await saveDoc(id, docOf("one", "two", "three, theirs"), start);
+  await saveDoc(id, docOf("one, mine", "two", "three"), start);
+  assert.deepEqual(await texts(id), ["one, mine", "two", "three, theirs"]);
+});
+
+test("a save made on top of a merged one of ours keeps what the merge took in", async () => {
+  const id = await newIssue();
+  const start = randomUUID();
+  await saveDoc(id, docOf("a", "b"), null, start);
+  await saveDoc(id, docOf("a, theirs", "b"), start);
+  // Ours went out from "a b" and came back merged; the next, sent before that came back, stands on what we sent.
+  const ours = randomUUID();
+  await saveDoc(id, docOf("a", "b, mine"), start, ours);
+  await saveDoc(id, docOf("a", "b, mine", "c, mine"), ours);
+  assert.deepEqual(await texts(id), ["a, theirs", "b, mine", "c, mine"]);
+});
+
+test("a save from a text no longer kept is refused, and the stored words stay", async () => {
+  const id = await newIssue();
+  const start = randomUUID();
+  await save(id, "start", null, start);
+  await save(id, "theirs", start);
+  await db.delete(schema.documentVersion).where(eq(schema.documentVersion.txId, start));
+  await rejects(save(id, "mine", start), "conflict", /someone else changed/);
+  assert.deepEqual(await texts(id), ["theirs"]);
+});
+
+test("a description keeps the texts of its last 100 saves", async () => {
+  const id = await newIssue();
+  let base: string | null = null;
+  for (let i = 0; i < 105; i++) {
+    const next = randomUUID();
+    await save(id, `v${i}`, base, next);
+    base = next;
+  }
+  const kept = await db.select().from(schema.documentVersion).where(eq(schema.documentVersion.documentId, id));
+  assert.equal(kept.length, 100);
 });
 
 test("the same text is no conflict, whatever it was edited from", async () => {
@@ -122,7 +173,8 @@ test("a save of the same text writes nothing, and one that names it is no confli
 test("naming a save that wrote nothing does not pass over someone's text after it", async () => {
   const { id, first, noop } = await savedTwice();
   await save(id, "theirs", first);
-  await rejects(save(id, "mine", noop), "conflict");
+  await save(id, "mine", noop);
+  assert.deepEqual(await texts(id), ["theirs", "mine"]);
 });
 
 test("a save with no base replaces what is there (the agent API)", async () => {

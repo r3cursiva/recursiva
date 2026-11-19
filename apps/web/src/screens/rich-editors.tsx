@@ -1,7 +1,7 @@
 // The three places that edit rich text: the issue pane's description, the comment composer and the create modal's
 // description, on the editor of packages/editor (ProseMirror, our toolkit and toolbar). It lives in the edit chunk,
 // which loads after the list has painted: a separate editor chunk was measured and lost (commit message, "Chunks").
-import { emptyDoc, sameDoc, type DocNode } from "@rsva/editor/doc";
+import { emptyDoc, type DocNode } from "@rsva/editor/doc";
 import { fromMarkdown } from "@rsva/editor/markdown";
 import { RichEditor, toMarkdown, type Cmd, type EditorHandle, type IssueSource, type MentionCandidate, type MentionSource, type SelectionActions, type SelectionInfo } from "@rsva/editor/editor";
 import type { DocJSON, Issue } from "@rsva/schema/models";
@@ -14,7 +14,7 @@ import { isTouch, useIsPhone } from "../lib/phone.ts";
 import { signedInUser } from "../auth.ts";
 import type { Uploaded } from "../lib/upload.ts";
 import { currentEngine, store } from "../store.ts";
-import { followsServer } from "../lib/description-base.ts";
+import { takeText } from "../lib/description-base.ts";
 import { commentQuote } from "./comment-quote.ts";
 import { ArrowUpIcon, AtIcon, CodeIcon, LinkSimpleIcon, ListBulletsIcon, ListChecksIcon, PaperclipIcon, PlusIcon, TextBIcon, TextItalicIcon } from "@phosphor-icons/react";
 import { Button } from "@rsva/ui/components/button";
@@ -80,8 +80,8 @@ type SaveState = "idle" | "editing" | "saved";
 /**
  * The open issue's description. Changes save after a short pause (and at most every few seconds while typing, and on leaving
  * the editor) through the optimistic queue: they show everywhere at once and survive going offline. A save from
- * elsewhere (another tab, an agent) replaces the text when there are no unsaved changes here; until Yjs, the last save
- * wins.
+ * elsewhere (another tab, a person, an agent) comes into the text in place, merged with what is being typed here, and the
+ * server merges a save made from an older text (ADR 0057).
  */
 export const DescriptionEditor = observer(function DescriptionEditor({ issue, className }: { issue: Issue; className?: string | undefined }) {
   const row = store.description(issue.id);
@@ -93,10 +93,9 @@ export const DescriptionEditor = observer(function DescriptionEditor({ issue, cl
   const max = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [state, setState] = useState<SaveState>("idle");
   const initial = useMemo(() => (row?.doc as DocNode | null | undefined) ?? null, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // The save this text grew from, and the last text sent from here: a save refused because the text moved on loses nothing
-  // in silence, and one of ours coming back is not "someone else's".
+  // The save this text grew from, and that text: the last one the editor and the server shared (lib/description-base.ts).
   const seen = useRef(row?.tx);
-  const sent = useRef<DocNode | null>(null);
+  const known = useRef<DocNode>(initial ?? emptyDoc());
   // The engine of this issue: leaving the workspace saves the last words there, not in the one on screen by then.
   const engine = useRef(currentEngine()).current;
 
@@ -110,7 +109,7 @@ export const DescriptionEditor = observer(function DescriptionEditor({ issue, cl
     // A save replaces the whole text. Whatever marked this dirty, it does not go over a text that may be newer.
     if (store.feed(issue.id).behind) return;
     const doc = (h.isEmpty() ? emptyDoc() : h.getDoc()) as DocJSON;
-    sent.current = doc as DocNode;
+    known.current = doc as DocNode;
     engine.updateDescription(issue.id, doc, seen.current);
     setState("saved");
   };
@@ -126,14 +125,16 @@ export const DescriptionEditor = observer(function DescriptionEditor({ issue, cl
     };
   }, []);
 
-  // Someone else's save: take it unless there is unsaved typing here, which then goes out as an edit of the older text.
+  // Someone else's save, or ours merged with theirs: taken in place, merged with unsaved typing here (ADR 0057).
   const saving = store.isPending(issue.id, "Document");
   useEffect(() => {
     const h = handle.current;
-    if (!h || !row) return;
-    const text = (row.doc as DocNode | null) ?? emptyDoc();
-    if (followsServer(saving, dirty.current, sent.current !== null && sameDoc(text, sent.current))) seen.current = row.tx;
-    if (!saving && !dirty.current && !sameDoc(h.getDoc(), text)) h.setDoc((row.doc as DocNode | null) ?? null);
+    if (!h || !row || saving) return;
+    const t = takeText(known.current, h.getDoc(), (row.doc as DocNode | null) ?? emptyDoc(), dirty.current);
+    if (!t) return;
+    if (t.show) h.takeDoc(t.show);
+    known.current = t.known;
+    seen.current = row.tx;
   }, [row?.doc, row?.tx, saving]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

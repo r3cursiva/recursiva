@@ -87,7 +87,7 @@ try {
     await page.close();
   });
 
-  await check("two people edit one description: the second is told and keeps the text", async () => {
+  await check("two people rewrite one description offline: both texts stay, nobody is refused", async () => {
     await ready(a);
     await one.setOffline(true);
     await two.setOffline(true);
@@ -97,13 +97,34 @@ try {
     await one.setOffline(false);
     await a.getByText("Saved", { exact: true }).waitFor({ timeout: NOTICE });
     await two.setOffline(false);
-    const refused = toast(b, "Change not saved");
-    await refused.waitFor({ timeout: NOTICE });
-    await b.getByText("the words of A").waitFor({ timeout: NOTICE });
-    await b.waitForTimeout(500);
-    await shot(b, "conflict");
-    assert.equal(await refused.getByLabel("Your text").inputValue(), "the words of B");
-    assert.equal(await toast(b, "All changes saved").count(), 0, "a refused change is not saved");
+    for (const page of [a, b]) for (const words of ["the words of A", "the words of B"]) await page.getByText(words).waitFor({ timeout: NOTICE });
+    await shot(b, "merged");
+    assert.equal(await toast(b, "Change not saved").count(), 0, "a merge refuses nobody");
+  });
+
+  await check("someone's save while you type comes into your text, and your typing goes on where it was", async () => {
+    await describe(a, "first line");
+    await a.keyboard.press("Enter");
+    await a.keyboard.type("second line");
+    await b.getByText("second line").waitFor({ timeout: NOTICE });
+    await b.getByText("Saved", { exact: true }).waitFor({ state: "hidden", timeout: NOTICE });
+    // B types slowly at the end of the second line; A's edit of the first arrives in the middle of it.
+    await b.getByLabel("Description").first().getByText("second line").click();
+    await b.keyboard.press("End");
+    let typed = false;
+    const typing = b.keyboard.type(" typed slowly by B here", { delay: 150 }).then(() => (typed = true));
+    await a.waitForTimeout(300);
+    await a.getByLabel("Description").first().getByText("first line").click();
+    await a.keyboard.press("End");
+    await a.keyboard.type("!");
+    await b.getByText("first line!").waitFor({ timeout: NOTICE });
+    assert.equal(typed, false, "A's edit shows while B is still typing, not after B's save");
+    await typing;
+    for (const page of [a, b]) {
+      await page.getByText("first line!").waitFor({ timeout: NOTICE });
+      await page.getByText("second line typed slowly by B here").waitFor({ timeout: NOTICE });
+    }
+    await shot(b, "typing-merged");
   });
 } catch (e) {
   failed = true;
