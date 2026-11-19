@@ -9,7 +9,7 @@
 // engine; an observable box under the facade needs no remount but tracks every store read, and made switching between
 // projects 3 ms slower (38 vs 35 ms) for an action taken a few times a day.
 import { RESERVED_SLUGS, WORKSPACE_SLUG } from "@rsva/schema/models";
-import { createSyncStore, copySlug, queued, type SyncEngine, type SyncStore } from "@rsva/sync";
+import { browserTabs, createSyncStore, copySlug, queued, type SyncEngine, type SyncStore } from "@rsva/sync";
 import { observable, observe, runInAction, when } from "mobx";
 import { account } from "./account.ts";
 import { readLocal, writeLocal } from "./lib/local-storage.ts";
@@ -92,6 +92,8 @@ function open(slug: string): SyncEngine {
     onReconnect: checkForNewVersion,
     onOthersChange: flashRows,
     reload: reloadForNewVersion,
+    // One connection for all the tabs of a workspace, and a change in one shows in the others at once (ADR 0058).
+    tabs: browserTabs(),
   });
   // Signed out, the engine stays idle: the sign-in screen shows and a successful sign-in reloads the page. An invite
   // link opens no workspace: joining ends in a page load of the joined one. Nor does NO_WS: App.tsx moves to a real one.
@@ -229,6 +231,7 @@ class Facade implements SyncStore {
   issueByKey: SyncStore["issueByKey"] = (key) => current.issueByKey(key);
   issueKey: SyncStore["issueKey"] = (issue) => current.issueKey(issue);
   isPending: SyncStore["isPending"] = (id, model) => current.isPending(id, model);
+  savingHere: SyncStore["savingHere"] = (issueId) => current.savingHere(issueId);
   updateIssue: SyncStore["updateIssue"] = (id, patch) => current.updateIssue(id, patch);
   updateIssues: SyncStore["updateIssues"] = (patches) => current.updateIssues(patches);
   purgeIssue: SyncStore["purgeIssue"] = (id) => current.purgeIssue(id);

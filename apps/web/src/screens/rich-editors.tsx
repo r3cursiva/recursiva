@@ -125,8 +125,9 @@ export const DescriptionEditor = observer(function DescriptionEditor({ issue, cl
     };
   }, []);
 
-  // Someone else's save, or ours merged with theirs: taken in place, merged with unsaved typing here (ADR 0057).
-  const saving = store.isPending(issue.id, "Document");
+  // Someone else's save, ours merged with theirs, or another tab's still on its way (tabs.ts): taken in place, merged with
+  // unsaved typing here (ADR 0057). Not under a save of this tab's on its way: the row shows that one.
+  const saving = store.savingHere(issue.id);
   useEffect(() => {
     const h = handle.current;
     if (!h || !row || saving) return;

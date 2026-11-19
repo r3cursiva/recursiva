@@ -304,6 +304,11 @@ export interface SyncStore {
   issueKey(issue: Issue): string;
   /** True while the issue (or comment) has local changes the server has not confirmed; with "Document", its description. */
   isPending(id: string, model?: "Document"): boolean;
+  /**
+   * A save of this issue's description made in this tab is on its way. Unlike isPending, not another tab's (tabs.ts): the
+   * open editor shows that one as it would the server's.
+   */
+  savingHere(issueId: string): boolean;
 
   /**
    * Applies the change locally at once (same frame), then sends it; a server rejection reverts it. `archivedAt` or
