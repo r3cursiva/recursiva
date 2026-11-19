@@ -99,6 +99,17 @@ export interface AccountSecurity {
 }
 
 /** GET /auth/me. */
+/**
+ * The public demo (apps/server/src/demo): an instance of its own that a visitor enters with no sign-up as a member of one
+ * shared workspace, starting over every night. Visitors' addresses are in a domain that receives no mail (RFC 2606).
+ */
+export const DEMO = { slug: "lumen", emailDomain: "demo.invalid" } as const;
+
+/** GET /auth/demo on a demo instance (404 elsewhere): the workspace a visitor enters. */
+export interface DemoInfo {
+  workspace: string;
+}
+
 export interface AccountMe {
   user: { id: string; email: string; name: string };
   passkeys: PasskeyView[];

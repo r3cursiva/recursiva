@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@rsva/fixtures": "workspace:*",
+    "@rsva/protocol": "workspace:*",
     "@rsva/schema": "workspace:*",
     "@rsva/test-kit": "workspace:*"
   },

@@ -18,6 +18,7 @@ import type { Readable } from "node:stream";
 import { accessBySlug } from "../auth/access.ts";
 import { requireActor } from "../auth/routes.ts";
 import { db, schema } from "../db.ts";
+import { demoMode, NO_UPLOADS } from "../demo/demo.ts";
 import { uploads } from "../sync/limits.ts";
 import { fileType } from "./sniff.ts";
 import { BlobError, type BlobStore, type ByteRange } from "./store.ts";
@@ -136,6 +137,7 @@ export function registerFileRoutes(root: FastifyInstance, store: BlobStore): voi
     app.put<{ Params: Params }>("/files/:ws/:sha", { preHandler: requireActor({ hidden: true }) }, async (req, reply) => {
       const a = await member(req, reply);
       if (!a) return reply;
+      if (demoMode) return reply.code(403).send(NO_UPLOADS);
       // An upload attaches nothing by itself: a file goes on an issue (issues.write) or into a comment's text (comments.write).
       if (!can(a.viewer, "issues.write") && !can(a.viewer, "comments.write"))
         return reply.code(403).send({ error: "forbidden", message: a.viewer.scope === "custom" ? `the token lacks ${GRANT_NAMES["issues.write"]} or ${GRANT_NAMES["comments.write"]}` : refusal(a.viewer, "issues.write", "upload files") });

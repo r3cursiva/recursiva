@@ -6,7 +6,6 @@
   "exports": {
     ".": "./src/generate.ts",
     "./database": "./src/database.ts",
-    "./demo": "./src/demo.ts",
     "./server": "./src/server.ts"
   },
   "bin": {

@@ -18,6 +18,7 @@ import { alias } from "drizzle-orm/pg-core";
 import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
 import { db, schema } from "../db.ts";
+import { demoMode, NO_UPLOADS } from "../demo/demo.ts";
 import { FILE_CSP, IMMUTABLE } from "../files/routes.ts";
 import { imageSize, sniffImage } from "../files/sniff.ts";
 import { uploads } from "../sync/limits.ts";
@@ -54,6 +55,7 @@ export function registerPictureRoutes(root: FastifyInstance): void {
     app.addContentTypeParser(/^image\//, { parseAs: "buffer", bodyLimit: PICTURE_MAX }, (_req, body, done) => done(null, body));
 
     app.put<{ Body: Buffer }>("/auth/me/picture", { preHandler: requireActor({ sessionOnly: true }) }, async (req, reply) => {
+      if (demoMode) return reply.code(403).send(NO_UPLOADS);
       const bytes = req.body;
       if (!Buffer.isBuffer(bytes)) return reply.code(415).send({ error: "unsupported_media_type", message: "send the picture as image/webp, image/jpeg or image/png" });
       const size = imageSize(bytes);

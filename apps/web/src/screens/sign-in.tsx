@@ -37,7 +37,7 @@ interface Signed {
   mayCreateWorkspaces: boolean;
 }
 
-type Step = { name: "email" } | { name: "code"; email: string; sentAt: number } | { name: "link"; secret: string; email: string } | { name: "offer" };
+type Step = { name: "email" } | { name: "demo" } | { name: "code"; email: string; sentAt: number } | { name: "link"; secret: string; email: string } | { name: "offer" };
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -112,6 +112,12 @@ export function SignIn({
     if (step.name === "link") history.replaceState(null, "", location.pathname + location.search);
   }, []);
 
+  // The public demo (apps/server/src/demo) lets a visitor in with no sign-up; anywhere else the answer is a 404.
+  useEffect(() => {
+    if (confirm || email || step.name !== "email") return;
+    void fetch("/auth/demo").then((r) => r.ok && setStep((s) => (s.name === "email" ? { name: "demo" } : s)), () => undefined);
+  }, []);
+
   // Passkeys in the email field's autofill, while the email step is on screen.
   useEffect(() => {
     if (step.name !== "email" || confirm) return;
@@ -148,6 +154,24 @@ export function SignIn({
                   })
           }
         />
+      )}
+      {step.name === "demo" && (
+        <Heading title="Try recursiva" text="A demo workspace, shared with the other visitors in it now. It starts over every night. No sign-up and no email.">
+          <Button
+            size="lg"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const s = await post<Signed>("/auth/demo", {});
+                await signedInAs(s.user.id);
+                workspaces.setMayCreate(false);
+                await onSignedIn();
+              })
+            }
+          >
+            Enter the demo
+          </Button>
+        </Heading>
       )}
       {step.name === "link" && (
         <Heading
