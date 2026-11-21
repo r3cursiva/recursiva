@@ -58,7 +58,7 @@ export function valueName(key: ListKey, v: string | number, ctx: QueryContext): 
       return parent ? `${ctx.issueKey(parent)} ${parent.title}` : "Unknown issue";
     }
     case "is":
-      return v === "blocked" ? "Blocked" : v === "blocking" ? "Blocking" : "Duplicate";
+      return v === "blocked" ? "Blocked" : v === "blocking" ? "Blocking" : v === "ready" ? "Ready" : "Duplicate";
     case "has":
       return "Has a link";
   }

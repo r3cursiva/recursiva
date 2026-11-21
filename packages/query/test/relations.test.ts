@@ -111,6 +111,34 @@ describe("is:", () => {
   });
 });
 
+describe("is:ready (RSVA-636)", () => {
+  const blocker = issue(41);
+  const waiting = issue(42, { blockedByIds: [blocker.id] });
+  const claimed = issue(43);
+  const closed = issue(44, { stateId: S.done.id });
+  const freed = issue(45, { blockedByIds: [closed.id] });
+  const all = [blocker, waiting, claimed, closed, freed];
+  const live = new Set([claimed.id]);
+  const c = baseCtx({ issues: { ...indexOf(all), hasLiveRun: (i) => live.has(i.id) } });
+  const run = (q: string) => {
+    const p = parseQuery(q, c);
+    assert.deepEqual(p.errors, []);
+    return runQueryRows(all, p.filter, display(), c).map((i) => i.number).sort((a, b) => a - b);
+  };
+
+  test("open, no open blocker, no live run", () => {
+    assert.deepEqual(run("is:ready"), [41, 45]);
+    assert.deepEqual(run("-is:ready"), [42, 43, 44]);
+    assert.deepEqual(run("is:ready,blocked"), [41, 42, 45]);
+  });
+
+  test("an index that cannot see runs refuses it instead of calling a claimed issue ready", () => {
+    const { errors, filter } = parseQuery("is:ready priority:high", baseCtx({ issues: indexOf(all) }));
+    assert.match(errors[0]!.message, /only the server has/);
+    assert.deepEqual(filter, { priority: [2] });
+  });
+});
+
 describe("has:", () => {
   const linked = issue(31);
   const plain = issue(32);

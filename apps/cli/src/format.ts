@@ -484,6 +484,37 @@ export const memberList = (members: readonly MemberRow[], s: Style = PLAIN): str
 export const viewList = (views: readonly ViewRow[], s: Style = PLAIN): string =>
   views.length ? table(views.map((v) => [v.name, v.shared ? "shared" : "mine", v.query]), s, [s.bold, s.gray]) : s.gray("no saved views");
 
+/** An agent's run on an issue (RSVA-636), as the API answers it. */
+export interface RunRow {
+  issue: string;
+  stage: string;
+  attempt: number;
+  agent: string | null;
+  leaseUntil: string;
+  live: boolean;
+  outcome: string | null;
+  note: string | null;
+  error: string | null;
+  endedAt: string | null;
+}
+
+const OUTCOME: Record<string, Colour> = { live: "green", done: "green", failed: "red", stopped: "red", expired: "yellow" };
+/** Live, or its lease passed with nobody closing it yet: what the next claim will find. */
+const runState = (r: RunRow) => r.outcome ?? (r.live ? "live" : "expired");
+
+/** One run in a line: its issue, stage and attempt, how it stands, and until or since when. */
+export const runLine = (r: RunRow): string => `${r.issue} ${r.stage} attempt ${r.attempt}: ${runState(r)} ${r.outcome ? `at ${r.endedAt}` : `until ${r.leaseUntil}`}`;
+
+/** An issue's runs, newest first: attempt, stage, outcome, agent, when, then the note or the error's first line. */
+export const runList = (runs: readonly RunRow[], s: Style = PLAIN): string =>
+  runs.length
+    ? table(
+        runs.map((r) => [`#${r.attempt}`, r.stage, runState(r), r.agent ?? "?", minute(r.endedAt ?? r.leaseUntil, s), r.note ?? r.error?.split("\n")[0] ?? ""]),
+        s,
+        [s.gray, undefined, (cell) => word(s, OUTCOME, cell), undefined, s.gray],
+      )
+    : s.gray("no runs");
+
 /** The workspace and whose token this is: a person's or the agent's, its role and scope, what it may change, and what members may beyond issues. */
 export function workspaceCard(w: WorkspaceInfo, s: Style = PLAIN): string {
   const token = [w.me.role, w.me.kind === "agent" ? "agent" : "", w.me.scope ? `${w.me.scope} token` : ""].filter(Boolean).join(" · ");

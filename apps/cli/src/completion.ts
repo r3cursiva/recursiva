@@ -30,6 +30,8 @@ export const PRIORITY_WORDS = ["urgent", "high", "medium", "low", "none"] as con
 export const ORDER_WORDS = ["updatedAt", "createdAt", "priority", "dueDate", "startDate", "manual"] as const;
 /** The kinds of a relation (RELATION_TYPES of @rsva/schema). */
 export const RELATION_WORDS = ["blockedBy", "blocks", "related", "duplicateOf", "duplicates"] as const;
+/** The stages of an agent's run (RUN_STAGES of @rsva/schema). */
+export const RUN_STAGES = ["triage", "work", "verify"] as const;
 /** Where `cycle complete` moves the open issues besides a cycle. */
 export const MOVE_WORDS = ["next", "none"] as const;
 /** Relative dates of the query (DATE_PRESETS of @rsva/query). */
@@ -45,7 +47,7 @@ export const QUERY_VALUES: Partial<Record<(typeof QUERY_WORDS)[number], readonly
   agent: ["any", "none", "me"],
   cycle: ["active", "next", "none"],
   parent: ["none", "any"],
-  is: ["blocked", "blocking", "duplicate"],
+  is: ["blocked", "blocking", "duplicate", "ready"],
   has: ["link"],
   start: [...DATE_WORDS, "none"],
   due: [...DATE_WORDS, "none"],

@@ -89,14 +89,17 @@ export function fileFixture(then?: (ws: Fixture) => Promise<unknown>): { ws: Fix
 }
 
 /**
- * A server, a sample workspace and the agent's and the owner's tokens, filled before a file's tests and closed after them;
- * `api(path)` is a URL under the workspace (or under another one given by its slug). Read the fields inside tests.
+ * A server, a sample workspace and the agent's and the owner's tokens, filled before a file's tests and closed after them,
+ * `then` once they are; `api(path)` is a URL under the workspace (or under another one given by its slug). Read the fields
+ * inside tests.
  */
-export function apiFixture(): { ws: Fixture; server: Awaited<ReturnType<typeof startServer>>; agent: typeof fetch; owner: typeof fetch; api(path: string, slug?: string): string } {
+export function apiFixture(then?: (ws: Fixture) => Promise<unknown>): { ws: Fixture; server: Awaited<ReturnType<typeof startServer>>; agent: typeof fetch; owner: typeof fetch; api(path: string, slug?: string): string } {
   const f = {} as ReturnType<typeof apiFixture>;
   before(async () => {
     [f.ws, f.server] = await Promise.all([importFixture(), startServer()]);
     ({ agent: f.agent, owner: f.owner } = await jsonTokens(f.ws));
+    // In the same hook: the next hook of a file does not wait for this one.
+    await then?.(f.ws);
   });
   after(() => f.server.close());
   f.api = (path, slug = f.ws.slug) => `${f.server.url}/api/v1/workspaces/${slug}${path}`;

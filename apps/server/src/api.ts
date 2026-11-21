@@ -6,12 +6,13 @@ import { DOC_MARKDOWN_MAX, emptyDoc, MENTION_ID, MENTION_SCHEME, mentionsInOrder
 import { fromMarkdown, toMarkdown } from "@rsva/editor/markdown";
 import { movedFrom, uuidv7, type Action, type Op, type SavedView } from "@rsva/protocol";
 import { DEFAULT_DISPLAY, needsIssueIndex, ORDER_BYS, parseQuery, runQueryRows, type OrderBy } from "@rsva/query";
-import { COMMENT_MAX, RELATION_TYPES, branchName, movedKeysOf, type Project, commitUrl, issueKey, parseIssueKey, pullUrl, relationPatches, UUID, type AttachmentCreate, type DocJSON, type GithubLink, type Issue, type RelationType } from "@rsva/schema/models";
+import { COMMENT_MAX, RELATION_TYPES, branchName, type Project, commitUrl, issueKey, pullUrl, relationPatches, UUID, type AttachmentCreate, type DocJSON, type GithubLink, type Issue, type RelationType } from "@rsva/schema/models";
 import { and, eq, inArray, sql as dsql, type SQL } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { readSettings } from "./auth/account.ts";
 import { cycleRoutes } from "./api-cycles.ts";
 import { inboxRoutes } from "./api-inbox.ts";
+import { runRoutes } from "./api-runs.ts";
 import { settingsRoutes } from "./api-settings.ts";
 import { tokenRoutes } from "./api-tokens.ts";
 import {
@@ -36,11 +37,11 @@ import {
   userIds,
   type Names,
 } from "./api-names.ts";
-import { needChange, okTx, projectOf, workspaceOf, writeAll, writeTx } from "./api-tx.ts";
+import { inTrash, issueByKey, needChange, okTx, projectOf, workspaceOf, writeAll, writeTx, type IssueParams } from "./api-tx.ts";
 import { RateLimited } from "./auth/limits.ts";
 import type { Mailer } from "./auth/mail.ts";
 import { requireActor } from "./auth/routes.ts";
-import { db, issueKeySql, movedUnder, projectKeyIs, schema } from "./db.ts";
+import { db, issueKeySql, schema } from "./db.ts";
 import { issueLinks } from "./github/pull.ts";
 import { HttpError, MARKDOWN_PUNCTUATION } from "./http.ts";
 import { COLUMNS } from "./sync/columns.ts";
@@ -48,8 +49,6 @@ import { readHistory } from "./sync/history.ts";
 import { isServerTime } from "./sync/log.ts";
 import { findView } from "./sync/views.ts";
 import { TX_OPS_MAX } from "./sync/write.ts";
-
-type IssueParams = { ws: string; key: string };
 
 /**
  * Mentions in an agent's Markdown name a member by email, `me` or user id: `[@Ann](mention:ann@x.dev)`. An unknown one is
@@ -144,27 +143,6 @@ async function issueFields(names: () => Promise<Names>, workspaceId: string, pro
   return set;
 }
 
-/** A change to an issue in the trash: it is restored first. */
-const inTrash = (key: string) => new HttpError(400, "deleted", `${key} is deleted; PATCH {"deleted": false} restores it`);
-
-/** Workspace and issue of an API path; a 404 when there is no such issue. */
-async function issueByKey(req: FastifyRequest<{ Params: IssueParams }>) {
-  const w = await workspaceOf(req);
-  // Any case: an agent or a person may type "plnr-27". A number no issue can have is no issue, not a failed query.
-  const k = parseIssueKey(req.params.key);
-  const { project, issue } = schema;
-  const columns = { id: issue.id, projectId: issue.projectId, deletedAt: issue.deletedAt, key: issueKeySql };
-  const find = (where: SQL) => db.select(columns).from(issue).innerJoin(project, eq(project.id, issue.projectId)).where(and(eq(project.workspaceId, w.workspaceId), where));
-  // A project's issue first; a key no project's issue answers to may be one an issue had before a move (PLNR-448).
-  let row = k ? (await find(and(projectKeyIs(k.projectKey), eq(issue.number, k.number))!))[0] : undefined;
-  if (k && !row) {
-    const [p] = await db.select({ key: project.key, formerKeys: project.formerKeys }).from(project).where(and(eq(project.workspaceId, w.workspaceId), projectKeyIs(k.projectKey)));
-    row = (await find(movedUnder(movedKeysOf(k.projectKey, k.number, p))))[0];
-  }
-  if (!row) throw new HttpError(404, "not_found", `no issue ${req.params.key}`);
-  return { w, issue: row };
-}
-
 /** The moves among a write's actions: each issue's new key in `to` and the key it left. */
 function movedKeys(actions: Action[], to: Project | undefined): { key: string; was: string }[] {
   if (!to) return [];
@@ -232,6 +210,7 @@ function routes(app: FastifyInstance, mailer: Mailer): void {
 
   cycleRoutes(app);
   inboxRoutes(app);
+  runRoutes(app);
   settingsRoutes(app);
   tokenRoutes(app, mailer);
 

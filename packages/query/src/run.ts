@@ -5,7 +5,7 @@
 //     browser are MobX proxies and a comparator that reads fields would do it n·log n times;
 //   - the ordered rows are dealt into groups, so every group comes out ordered without a sort of its own.
 // docs/research/query-2026-10-27.md compares this with a per-key closure filter and with bitset indexes.
-import { PRIORITIES, STATE_GROUPS, cycleStatus, priorityName, type Cycle, type Issue, type Label, type Project, type StateGroup, type User, type WorkflowState } from "@rsva/schema/models";
+import { PRIORITIES, STATE_GROUPS, cycleStatus, isOpenIssue, priorityName, type Cycle, type Issue, type Label, type Project, type StateGroup, type User, type WorkflowState } from "@rsva/schema/models";
 import { addDays, dayStart } from "@rsva/schema/days";
 import { currentRange, todayOf } from "./dates.ts";
 import type { DateRange, DisplayOptions, Filter, GroupBy, IssueGroup, OrderBy, QueryContext } from "./index.ts";
@@ -202,7 +202,10 @@ export function compileFilter(f: Filter, ctx: QueryContext, today: string): Chec
     const blocking = f.is.includes("blocking");
     // A field of the issue itself: no index needed, so `is:duplicate` alone loads nothing (needsIssueIndex).
     const duplicate = f.is.includes("duplicate");
-    checks.push((i) => (duplicate && i.duplicateOfId !== null) || (!!index && ((blocked && index.isBlocked(i)) || (blocking && index.isBlocking(i)))));
+    // Open, not waiting on an open issue, and no agent at work on it: what an agent may claim next (RSVA-636).
+    const live = f.is.includes("ready") ? index?.hasLiveRun?.bind(index) : undefined;
+    const ready = (i: Issue) => !!live && isOpenIssue(i, ctx.states.get(i.stateId)?.group) && !index!.isBlocked(i) && !live(i);
+    checks.push((i) => (duplicate && i.duplicateOfId !== null) || (!!index && ((blocked && index.isBlocked(i)) || (blocking && index.isBlocking(i)) || ready(i))));
   }
   if (f.has && f.has.length) {
     const index = ctx.issues;

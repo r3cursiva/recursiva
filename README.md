@@ -98,8 +98,9 @@ with its own recursiva token and a GitHub token of its own, never yours. Require
   for the server's answer; no runtime dependencies. `rsva help` lists the commands.
   Not on npm yet: it runs from a clone, `pnpm install` and `node apps/cli/bin/rsva.js` (the steps:
   [Getting rsva](https://rsva.dev/docs/terminal/cli#getting-rsva)). `rsva tui` comes with it.
-- **HTTP API**, `/api/v1/workspaces/:ws/...`: issues, comments, cycles, relations, links, labels, states, projects, tokens.
-  Reference: https://rsva.dev/docs/agents/api (the whole manual as one file: https://rsva.dev/docs/llms-full.txt).
+- **HTTP API**, `/api/v1/workspaces/:ws/...`: issues, comments, cycles, relations, links, labels, states, projects, tokens,
+  and agent runs (`POST …/issues/:key/runs` claims an issue with a lease; `…/runs/renew`, `/complete`, `/fail`; `GET`
+  lists them; three failed attempts or the same error twice stop the loop and send the issue to review). Reference: https://rsva.dev/docs/agents/api (the whole manual as one file: https://rsva.dev/docs/llms-full.txt).
 
 There is no MCP server and no SDK yet.
 

@@ -8,7 +8,7 @@ import { MY_WORK, STATE_GROUPS, type IssueRow } from "@rsva/terminal/issues";
 import { scratchFile } from "@rsva/terminal/programs";
 import { plural } from "@rsva/schema/util";
 import { clean, escaped, plain } from "@rsva/terminal/text";
-import { MOVE_WORDS, ORDER_WORDS, PRIORITY_WORDS, quoted, RELATION_WORDS, zsh, type Completable } from "./completion.ts";
+import { MOVE_WORDS, ORDER_WORDS, PRIORITY_WORDS, quoted, RELATION_WORDS, RUN_STAGES, zsh, type Completable } from "./completion.ts";
 import {
   commentList,
   cycleCard,
@@ -21,6 +21,8 @@ import {
   memberList,
   projectCard,
   projectList,
+  runLine,
+  runList,
   similarLine,
   stateList,
   viewList,
@@ -34,6 +36,7 @@ import {
   type MemberRow,
   type ProjectFull,
   type ProjectRow,
+  type RunRow,
   type SimilarRow,
   type StateRow,
   type ViewRow,
@@ -118,6 +121,10 @@ const FLAGS = {
   force: { boolean: true },
   to: {},
   "sub-issues": { boolean: true },
+  stage: { values: RUN_STAGES },
+  lease: {},
+  note: {},
+  error: {},
 } as const satisfies Record<string, FlagSpec>;
 
 type Flag = keyof typeof FLAGS;
@@ -333,7 +340,7 @@ const issueCommands: Record<string, Command> = {
   issues: {
     args: "[query...]",
     flags: "[-p KEY] [--view NAME] [--order FIELD] [--limit N]",
-    about: `list; the query is the language of the app's / field: state:"In Review" label:bug -label:security cycle:active parent:INFRA-300 is:blocked has:link order:priority text; ${LIMIT_MAX} at most`,
+    about: `list; the query is the language of the app's / field: state:"In Review" label:bug -label:security cycle:active parent:INFRA-300 is:blocked is:ready has:link order:priority text; ${LIMIT_MAX} at most`,
     run: (c) => issueQuery(c),
   },
   my: {
@@ -543,6 +550,57 @@ const inbox: Command = {
     const r = await c.api.request<{ marked: number }>("POST", "/inbox", { body: { [what]: c.v.all ? "all" : keys.map((k) => k.toUpperCase()) } });
     return wrote(c, r, (d) => `${what === "archive" ? "archived" : `marked ${what}`}: ${d.marked}`);
   },
+};
+
+// ── Agent runs (RSVA-636): one agent's turn at a stage of an issue, held by a lease ─────────────────────────────────
+
+/** `--lease 90m`: seconds, or a number of s, m or h; the server holds it to its bounds. */
+function lease(v: string | undefined): number | undefined {
+  if (v === undefined) return undefined;
+  const m = /^(\d+)([smh]?)$/.exec(v.trim());
+  if (!m || +m[1]! === 0) throw new UsageError(`--lease: a duration such as 90s, 30m or 2h, not ${v}`);
+  return +m[1]! * { "": 1, s: 1, m: 60, h: 3600 }[m[2] as "" | "s" | "m" | "h"];
+}
+
+interface RunAnswer {
+  run: RunRow;
+  stop?: { reason: string; movedTo: string | null; written: boolean; refused?: string };
+}
+
+/** A run's answer in words; a stop says why, where the issue went, and whether that could be written. */
+const ranLine = (c: Ctx, says: string) => (d: RunAnswer) =>
+  [
+    done(c, `${says} ${runLine(d.run)}`),
+    ...(d.stop ? [`stopped the ${d.run.stage} loop: ${d.stop.reason}${d.stop.movedTo ? `; moved to ${d.stop.movedTo}` : ""}${d.stop.written ? "" : `; not written: ${d.stop.refused}`}`] : []),
+  ].join("\n");
+
+const runCall = (c: Ctx, tail: string, body: Record<string, unknown>, says: string) =>
+  wrote(c, c.api.request<RunAnswer>("POST", issuePath(c, `/runs${tail}`), { body: given(body) }), ranLine(c, says));
+
+const runCommands: Record<string, Command> = {
+  claim: {
+    args: "<key>",
+    flags: "[--stage S] [--lease 1h]",
+    about: `take a stage of the issue (${RUN_STAGES.join(", ")}; work when left out) with a lease, an hour by default; refused while another run is live, or after the stage's loop stopped until a person moves the issue out of review`,
+    run: (c) => runCall(c, "", { stage: c.v.stage, lease: lease(c.v.lease) }, "claimed"),
+  },
+  renew: { args: "<key>", flags: "[--lease 1h]", about: "extend your live run's lease from now", run: (c) => runCall(c, "/renew", { lease: lease(c.v.lease) }, "renewed") },
+  complete: { args: "<key>", flags: "[--note T]", about: "end your live run as done", run: (c) => runCall(c, "/complete", { note: c.v.note }, "completed") },
+  fail: {
+    args: "<key>",
+    flags: "--error T [--note T]",
+    about: "end your live run as failed; three failed attempts, or the same error twice in a row, stop the loop: the issue goes to review with a comment of what was tried",
+    async run(c) {
+      if (c.v.error === undefined) throw new UsageError("fail: what failed? --error TEXT, - reads it from stdin");
+      return runCall(c, "/fail", { error: await text(c, c.v.error), note: c.v.note }, "failed");
+    },
+  },
+};
+
+const runs: Command = {
+  args: "<key>",
+  about: "an issue's agent runs, newest first: attempt, stage, outcome, agent, when, note",
+  run: async (c) => shown(c, await c.api.request<{ runs: RunRow[] }>("GET", issuePath(c, "/runs")), (d) => runList(d.runs, c.style)),
 };
 
 const cycles: Command = {
@@ -822,7 +880,7 @@ const help: Command = {
 };
 
 /** Every command, in the order the help lists them. */
-const COMMANDS: Record<string, Command | Group> = { ...issueCommands, inbox, cycles, cycle: cycleGroup, ...settingsCommands, tui, login, logout, completion, api, help };
+const COMMANDS: Record<string, Command | Group> = { ...issueCommands, inbox, run: { about: "an agent's run on an issue: claim, renew, complete, fail", commands: runCommands }, runs, cycles, cycle: cycleGroup, ...settingsCommands, tui, login, logout, completion, api, help };
 
 const isGroup = (x: Command | Group): x is Group => "commands" in x;
 

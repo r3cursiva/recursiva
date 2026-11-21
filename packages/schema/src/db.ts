@@ -21,7 +21,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
-import type { TileColor } from "./models.ts";
+import type { RunOutcome, RunStage, TileColor } from "./models.ts";
 
 const id = () => uuid().primaryKey().default(sql`uuidv7()`);
 const ts = () => timestamp({ withTimezone: true, mode: "string" });
@@ -352,6 +352,40 @@ export const attachment = pgTable(
     ...external,
   },
   (t) => [index().on(t.workspaceId), index().on(t.issueId), externalIndex(t, t.workspaceId)],
+);
+
+/**
+ * One agent's turn at one stage of an issue (RSVA-636): claimed with a lease, renewed, then ended done or failed, or
+ * found expired by the next claim. The rules over these rows are in apps/server/src/runs.ts. Server-only: reached over
+ * REST, not in the log or the snapshot. `outcome` is null while the run is live; at most one such row per issue (the
+ * partial unique index), which is what makes two racing claims end with one live run.
+ */
+export const run = pgTable(
+  "run",
+  {
+    ...onIssue(),
+    /** The token's person: an agent, or a person claiming by hand. */
+    agentId: uuid().notNull().references(() => user.id),
+    stage: text().$type<RunStage>().notNull(),
+    /** 1-based: the runs of this issue and stage since the last done or reset one, this one included. */
+    attempt: integer().notNull(),
+    leaseUntil: ts().notNull(),
+    outcome: text().$type<RunOutcome>(),
+    note: text(),
+    /** A failed run's error as sent (cut to ERROR_MAX), and its normalised hash: equal for the same error twice. */
+    error: text(),
+    errorFingerprint: text(),
+    /** A stopped run: the log number its move to review and comment were written at; a person's change of state after it resets the loop. */
+    stopSyncId: bigint({ mode: "number" }),
+    createdAt: ts().notNull().defaultNow(),
+    endedAt: ts(),
+  },
+  (t) => [
+    uniqueIndex("run_live_index").on(t.issueId).where(sql`${t.outcome} is null`),
+    index().on(t.issueId, t.stage, t.createdAt),
+    // The live runs of a workspace, for `is:ready`.
+    index("run_workspace_live_index").on(t.workspaceId).where(sql`${t.outcome} is null`),
+  ],
 );
 
 /**
