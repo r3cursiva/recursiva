@@ -138,6 +138,12 @@ describe("is:ready (RSVA-636)", () => {
     assert.match(errors[0]!.message, /only the server has/);
     assert.deepEqual(filter, { priority: [2] });
   });
+
+  test("it is suggested only where an index can answer it", () => {
+    const suggested = (ctx: typeof c) => parseQuery("is:rea", ctx).errors[0]!.suggestions;
+    assert.ok(suggested(c).includes("ready"));
+    assert.ok(!suggested(baseCtx({ issues: indexOf(all) })).includes("ready"), "the browser's and the TUI's index have no runs");
+  });
 });
 
 describe("has:", () => {

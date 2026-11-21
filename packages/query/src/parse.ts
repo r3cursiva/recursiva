@@ -318,7 +318,8 @@ function resolvers(ctx: QueryContext) {
       case "parent":
         return PARENT_WORDS;
       case "is":
-        return IS_WORDS;
+        // `ready` only where it can be answered: an index that knows the runs (the server's).
+        return ctx.issues?.hasLiveRun ? IS_WORDS : IS_WORDS.filter((w) => w !== "ready");
       case "has":
         return HAS_WORDS;
     }
