@@ -219,6 +219,7 @@ function promptOf(key: string, worktree: string, branch: string, context: string
     `Your work on ${key} is a run on the server, claimed for you and renewed while this session lives. End it yourself, once:`,
     `\`rsva run complete ${key} --evidence "…"\` with one --evidence per criterion of \`rsva run criteria ${key}\`, in order, and the pull`,
     `request's link in --note; or, if you cannot finish, \`rsva run fail ${key} --error "…"\` and stop: do not claim or retry on your own.`,
+    "Add --env to it when the cause is outside the code: no push access, the network, a missing tool.",
   ];
   return [
     `# ${key}`,
@@ -483,7 +484,8 @@ async function tokenFrom(secret: (service: string) => Promise<string>, services:
  * Runs a dispatch step by step. `report` sees every step as it changes. A failure before the agent starts undoes
  * the worktree and the branch; one after it (the planner refused a write) leaves the agent working and says so.
  * The work stage is claimed on the server, with the agent's token, before the clone: a refusal (another holds it, or the
- * loop stopped) starts nothing; a later failure fails the run, so it counts as an attempt like any other.
+ * loop stopped) starts nothing; a later failure fails the run as the environment's (blocked), which has a cap of its own
+ * on the server but is not the agent's attempt.
  */
 export async function dispatch(
   p: Plan,
@@ -561,7 +563,8 @@ export async function dispatch(
     const env = { ...pick(process.env, ["RSVA_URL", "RSVA_WS"]), RSVA_TOKEN: rsva };
     const calls = callsOf(env);
     const run = await calls.claim(p.key, "work");
-    undo.push({ text: `${p.key} work run failed`, run: () => calls.fail(p.key, `the dispatch failed before the agent started: ${failure}`) });
+    // A step after the claim failing is this Mac's setup, not the agent's work: the run fails as the environment's.
+    undo.push({ text: `${p.key} work run failed`, run: () => calls.fail(p.key, `the dispatch failed before the agent started: ${failure}`, true) });
     return { env, url, github, claim: { id: run.id, stage: run.stage, attempt: run.attempt } };
   });
   const { url } = agentEnv;

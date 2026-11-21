@@ -109,6 +109,7 @@ test("the plan: a branch the bot reads, its own clone in the repository's worktr
   assert.match(p.prompt, /rsva run criteria PLNR-305/);
   assert.match(p.prompt, /rsva run complete PLNR-305 --evidence "…"` with one --evidence per criterion/);
   assert.match(p.prompt, /rsva run fail PLNR-305 --error "…"` and stop: do not claim or retry on your own/);
+  assert.match(p.prompt, /Add --env to it when the cause is outside the code: no push access, the network, a missing tool\./);
   assert.throws(() => planOf({ ...issue, key: "INFRA-247" }, choice, w.config), /INFRA: no repository/);
   assert.throws(() => planOf({ ...issue, key: "PLNR-1/../../x" }, choice, w.config), /not an issue key/);
   assert.ok(!p.command.includes("--agent"), "Claude as it is, no agent from ~/.claude/agents (PLNR-394)");
@@ -249,7 +250,8 @@ test("a failed start removes the clone, writes nothing to the planner and keeps 
     w.steps.at(-1)!.map((s) => s.state),
     ["done", "done", "done", "failed", "undone", "undone", "undone", "undone"],
   );
-  assert.deepEqual(w.server.log, ["claim PLNR-305 work", `fail PLNR-305: the dispatch failed before the agent started: Rex session ${p.session}: rex new failed`], "the claimed run failed: an attempt, as any other");
+  assert.deepEqual(w.server.log, ["claim PLNR-305 work", `fail --env PLNR-305: the dispatch failed before the agent started: Rex session ${p.session}: rex new failed`], "the claimed run failed as the environment's, not the agent's attempt");
+  assert.equal(w.server.runs.at(-1)!.outcome, "blocked");
 });
 
 test("a claim the server refuses starts nothing: no clone, no session, no planner write; the step says why", async (t) => {

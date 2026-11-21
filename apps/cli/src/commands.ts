@@ -127,6 +127,7 @@ const FLAGS = {
   lease: {},
   note: {},
   error: {},
+  env: { boolean: true },
   evidence: { multiple: true },
 } as const satisfies Record<string, FlagSpec>;
 
@@ -618,11 +619,11 @@ const runCommands: Record<string, Command> = {
   },
   fail: {
     args: "<key>",
-    flags: "--error T [--note T]",
-    about: "end your live run as failed; three failed attempts in a day, or the same error twice in a row, stop the loop: the issue goes to review with a comment of what was tried. The error (its first 500 characters are kept) is visible to everyone in the workspace: no secrets in it",
+    flags: "--error T [--note T] [--env]",
+    about: "end your live run as failed; three failed attempts in a day, or the same error twice in a row, stop the loop: the issue goes to review with a comment of what was tried. --env when the cause is outside the code (no push access, the network, a missing tool): recorded as blocked, not counted as your attempt; three of those in a day stop the loop too. The error (its first 500 characters are kept) is visible to everyone in the workspace: no secrets in it",
     async run(c) {
       if (c.v.error === undefined) throw new UsageError("fail: what failed? --error TEXT, - reads it from stdin");
-      return runCall(c, "/fail", { error: await text(c, c.v.error), note: c.v.note }, "failed");
+      return runCall(c, "/fail", { error: await text(c, c.v.error), note: c.v.note, env: c.v.env || undefined }, c.v.env ? "blocked" : "failed");
     },
   },
   criteria: {
@@ -634,7 +635,7 @@ const runCommands: Record<string, Command> = {
 
 const runs: Command = {
   args: "<key>",
-  about: "an issue's agent runs, newest first: attempt, stage, outcome, agent, when, note",
+  about: "an issue's agent runs, newest first: attempt, stage, outcome (blocked: the environment failed, not the agent), agent, when, note",
   run: async (c) => shown(c, await runsOf(c), (d) => runList(d.runs, c.style, d.more)),
 };
 

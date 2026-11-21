@@ -35,7 +35,7 @@ const call = async (as: typeof fetch, method: string, path: string, body?: unkno
 };
 const runs = (key: string, tail = "") => `/issues/${key}/runs${tail}`;
 const claim = (as: typeof fetch, key: string, body: Record<string, unknown> = {}) => call(as, "POST", runs(key), body);
-const fail = (as: typeof fetch, key: string, error: string, note?: string) => call(as, "POST", runs(key, "/fail"), { error, ...(note ? { note } : {}) });
+const fail = (as: typeof fetch, key: string, error: string, note?: string, env?: unknown) => call(as, "POST", runs(key, "/fail"), { error, ...(note ? { note } : {}), ...(env === undefined ? {} : { env }) });
 
 async function newIssue(title: string, more: Record<string, unknown> = {}): Promise<string> {
   const r = await call(f.agent, "POST", "/issues", { project: "CORE", title, force: true, ...more });
@@ -427,4 +427,23 @@ test("a done work run whose move to review is refused still leaves the evidence,
     assert.equal(more.length, 0);
     assert.match(comment!.body, /^1\. it works — it does\n\nThe move to review was refused \(.*people set this state.*\), so the issue stays where it is\.$/m);
   });
+});
+
+test("a failure of the environment is recorded as blocked, takes no agent attempt, and three of them stop the loop", async () => {
+  const key = await newIssue("Push denied");
+  await failTwice(key);
+  for (const i of [1, 2]) {
+    await claim(f.agent, key);
+    if (i === 1) assert.equal((await fail(f.agent, key, "x", undefined, "yes")).status, 400, "env is a boolean");
+    const r = await fail(f.agent, key, "git push denied (403)", undefined, true);
+    assert.deepEqual([r.status, r.body.run!.outcome, r.body.stop], [200, "blocked", undefined], `blocked ${i}: neither the third attempt nor the same error twice`);
+  }
+  await claim(f.agent, key);
+  const third = await fail(f.agent, key, "git push denied (403)", "no write access", true);
+  assert.match(third.body.stop!.reason, /^3 failures of the environment, not of the agent/);
+  assert.equal(await stateOf(key), "In Review");
+  const [comment] = await stopComments(key);
+  assert.match(comment!.body, /^Stopped the work loop: 3 failures of the environment, not of the agent/);
+  assert.match(comment!.body, /\n3\. blocked — error: git push denied \(403\)\n/);
+  assert.deepEqual(((await call(f.owner, "GET", runs(key))).body.runs as Run[]).map((r) => r.outcome), ["stopped", "blocked", "blocked", "failed", "failed"]);
 });

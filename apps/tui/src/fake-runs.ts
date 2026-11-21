@@ -35,9 +35,9 @@ export function fakeServer(): FakeServer {
         log.push(`renew ${key}`);
         return runs.at(-1)!;
       },
-      async fail(key, error) {
-        log.push(`fail ${key}: ${error}`);
-        return Object.assign(runs.at(-1)!, { live: false, outcome: "failed" });
+      async fail(key, error, env) {
+        log.push(`fail${env ? " --env" : ""} ${key}: ${error}`);
+        return Object.assign(runs.at(-1)!, { live: false, outcome: env ? "blocked" : "failed" });
       },
       async latest(key) {
         log.push(`latest ${key}`);

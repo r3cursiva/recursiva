@@ -17,8 +17,9 @@ import type { RunOutcome } from "@rsva/schema/models";
 const LEASE_DEFAULT = 3600;
 export const LEASE_MIN = 60;
 export const LEASE_MAX = 6 * 3600;
-/** Failed or expired attempts of a stage after which the loop stops. */
+/** Failed or expired attempts of a stage after which the loop stops; blocked ones (the environment's failures) have their own. */
 const ATTEMPTS_MAX = 3;
+const BLOCKED_MAX = 3;
 /** How far back attempts count: a day. */
 const ATTEMPT_WINDOW_MS = 24 * 3600_000;
 /**
@@ -46,11 +47,15 @@ export function attemptsOf<R extends RunFacts>(runs: readonly R[], now = Date.no
 /**
  * Why the loop stops after the attempts so far (attemptsOf), or null: ATTEMPTS_MAX failed or expired ones, or the last
  * two failed or expired ones both failed with the same error (a done run between them does not clear it). An expired
- * run has no error, so it never repeats one.
+ * run has no error, so it never repeats one. A blocked run is the environment's failure, not the agent's: it takes no
+ * part in either rule, and BLOCKED_MAX of them stop the loop on their own, so a broken setup, or an agent that calls
+ * every failure the environment's, still ends within ATTEMPTS_MAX + BLOCKED_MAX failures.
  */
 export function stopReason(attempts: readonly RunFacts[]): string | null {
   const failures = attempts.filter(failed);
   if (failures.length >= ATTEMPTS_MAX) return `${failures.length} failed attempts`;
+  const blocked = attempts.filter((r) => r.outcome === "blocked").length;
+  if (blocked >= BLOCKED_MAX) return `${blocked} failures of the environment, not of the agent: fix the setup (access, network, tools)`;
   const [a, b] = failures.slice(-2);
   if (a?.outcome === "failed" && b?.outcome === "failed" && a.errorFingerprint !== null && a.errorFingerprint === b.errorFingerprint) return "the same error twice in a row";
   return null;

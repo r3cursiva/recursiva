@@ -9,6 +9,7 @@ const at = (hoursAgo = 1) => new Date(NOW - hoursAgo * 3600_000).toISOString();
 const failed = (errorFingerprint: string | null = null, createdAt = at()): RunFacts => ({ outcome: "failed", errorFingerprint, createdAt });
 const expired: RunFacts = { outcome: "expired", errorFingerprint: null, createdAt: at() };
 const done: RunFacts = { outcome: "done", errorFingerprint: null, createdAt: at() };
+const blocked = (errorFingerprint: string | null = "env"): RunFacts => ({ outcome: "blocked", errorFingerprint, createdAt: at() });
 
 test("attempts count from the last stopped run, over the last day; a done run does not end the count", () => {
   assert.equal(attemptsOf([failed(), failed()], NOW).length, 2);
@@ -96,4 +97,16 @@ test("evidence keeps inline code and bare URLs; agent text cannot change the com
   assert.ok(!all.some((n) => n.marks?.some((m) => m.type === "bold" || m.type === "italic")), "no emphasis");
   for (const h of hostile) assert.ok(all.map((n) => n.text).join("").includes(h.replace("\n", " ")), `${h} reads as it was written`);
   assert.match(md, /^1\.\s+`pnpm check` passes — green in apps\/server\/src\/runs\.test\.ts, ``a`b`` c$/m, "harmless punctuation is not escaped");
+});
+
+test("the environment's failures do not count as the agent's, and stop the loop at a cap of their own", () => {
+  assert.equal(stopReason([failed("a"), blocked(), failed("b"), blocked()]), null, "two failures of the agent, two of the environment");
+  assert.equal(stopReason([blocked("x"), blocked("x")]), null, "the same error twice: the environment's is not the agent's repeat");
+  assert.equal(stopReason([failed("a"), blocked("a"), failed("b")]), null, "a blocked run between does not make a repeat either");
+  assert.equal(stopReason([failed("a"), blocked("a"), failed("a")]), "the same error twice in a row", "nor clear one");
+  assert.match(stopReason([blocked(), failed("a"), blocked(), blocked()])!, /^3 failures of the environment, not of the agent/);
+  // An agent that calls every failure the environment's is still stopped: at most 3 + 3 failures in a window.
+  assert.equal(stopReason([failed("a"), failed("b"), blocked(), blocked()]), null);
+  assert.ok(stopReason([failed("a"), failed("b"), blocked(), blocked(), blocked()]));
+  assert.ok(stopReason([blocked(), blocked(), failed("a"), failed("b"), failed("c")]));
 });

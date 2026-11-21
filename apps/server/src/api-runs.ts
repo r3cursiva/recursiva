@@ -277,7 +277,7 @@ async function claim(req: Req): Promise<{ status: number; body: unknown }> {
   return { status: 201, body: { run: await view(got.row, found), ...extra } };
 }
 
-type Ending = { kind: "renew"; lease: number } | { kind: "done"; note: string | null; evidence: unknown } | { kind: "failed"; note: string | null; error: string };
+type Ending = { kind: "renew"; lease: number } | { kind: "done"; note: string | null; evidence: unknown } | { kind: "failed"; note: string | null; error: string; env: boolean };
 
 /** The newest runs a list answers with, and what such an answer is reserved as against the read budget: each run's evidence fits a comment. */
 const RUNS_PAGE = 50;
@@ -314,7 +314,7 @@ async function endOwn(req: Req, ending: (b: Record<string, unknown>) => Ending) 
         proof = checked.proof;
         return endRun(tx, live, "done", { note: what.note, evidence: proof.length ? proof : null });
       }
-      return endRun(tx, live, "failed", { note: what.note, error: what.error, errorFingerprint: fingerprint(what.error) });
+      return endRun(tx, live, what.env ? "blocked" : "failed", { note: what.note, error: what.error, errorFingerprint: fingerprint(what.error) });
     }),
   );
   if ("none" in got) throw new HttpError(409, "conflict", `no open run on ${found.issue.key}: it ended, or another claim found its lease lapsed and closed it; claim it again`);
@@ -349,11 +349,13 @@ export function runRoutes(app: FastifyInstance): void {
 
   app.post<{ Params: IssueParams; Body: Record<string, unknown> | null }>(`${path}/renew`, (req) => endOwn(req, (b) => ({ kind: "renew", lease: leaseOf(b) })));
   app.post<{ Params: IssueParams; Body: Record<string, unknown> | null }>(`${path}/complete`, (req) => endOwn(req, (b) => ({ kind: "done", note: textOf(b, "note", NOTE_MAX), evidence: b.evidence })));
+  // {"error": "…", "note": "…", "env": true}: failed, or with `env` blocked, the environment's failure (runs.ts, stopReason).
   app.post<{ Params: IssueParams; Body: Record<string, unknown> | null }>(`${path}/fail`, (req) =>
     endOwn(req, (b) => {
       const error = textOf(b, "error", ERROR_MAX);
       if (!error) throw new HttpError(400, "invalid", "error: what failed, as text");
-      return { kind: "failed", note: textOf(b, "note", NOTE_MAX), error };
+      if (b.env !== undefined && typeof b.env !== "boolean") throw new HttpError(400, "invalid", "env: true when the environment failed, not the work");
+      return { kind: "failed", note: textOf(b, "note", NOTE_MAX), error, env: b.env === true };
     }),
   );
 

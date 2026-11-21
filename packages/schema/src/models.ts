@@ -477,8 +477,12 @@ export function startedStage(projectStates: readonly Pick<WorkflowState, "id" | 
 /** The stages of an agent's loop on an issue (RSVA-636): sort it out, do it, check it. Each has its own attempts. */
 export const RUN_STAGES = ["triage", "work", "verify"] as const;
 export type RunStage = (typeof RUN_STAGES)[number];
-/** How a run ended: `expired` its lease passed before it ended, `stopped` it ended the loop (apps/server/src/runs.ts). */
-export type RunOutcome = "done" | "failed" | "expired" | "stopped";
+/**
+ * How a run ended: `expired` its lease passed before it ended, `blocked` it failed on its environment (no push access,
+ * the network, a missing tool, the dispatch's own setup) rather than on the work, `stopped` it ended the loop
+ * (apps/server/src/runs.ts).
+ */
+export type RunOutcome = "done" | "failed" | "blocked" | "expired" | "stopped";
 
 /** A UUID (any version) as Postgres writes it, lower case, for a larger pattern: a mention, a pin, a Telegram button. */
 export const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
