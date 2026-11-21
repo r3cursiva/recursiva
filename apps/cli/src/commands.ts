@@ -573,13 +573,19 @@ interface RunAnswer {
   stop?: { reason: string; movedTo: string | null; written: boolean; refused?: string };
   /** A completion with evidence: its comment on the issue. */
   comment?: { written: boolean; refused?: string };
+  /** A completion of work in a project with a review state: the issue there, or the move refused. */
+  review?: { movedTo: string; moved: boolean; refused?: string };
 }
 
-/** A run's answer in words; a stop says why, where the issue went, and whether that could be written; evidence, its comment. */
+/**
+ * A run's answer in words; a stop says why, where the issue went, and whether that could be written; a completion, where
+ * the issue went and its evidence comment.
+ */
 const ranLine = (c: Ctx, says: string) => (d: RunAnswer) =>
   [
     done(c, `${says} ${runLine(d.run)}`),
     ...(d.stop ? [`stopped the ${d.run.stage} loop: ${d.stop.reason}${d.stop.movedTo ? `; moved to ${d.stop.movedTo}` : ""}${d.stop.written ? "" : `; not written: ${d.stop.refused}`}`] : []),
+    ...(d.review ? [d.review.moved ? `${d.run.issue} now in ${d.review.movedTo}` : `${d.run.issue} stays where it was: the move to ${d.review.movedTo} was refused: ${d.review.refused}`] : []),
     ...(d.comment ? [d.comment.written ? `commented the evidence for ${plural(d.run.evidence?.length ?? 0, "criterion", "criteria")}` : `the evidence comment was not written: ${d.comment.refused}`] : []),
   ].join("\n");
 
@@ -607,7 +613,7 @@ const runCommands: Record<string, Command> = {
   complete: {
     args: "<key>",
     flags: "[--evidence T]... [--note T]",
-    about: "end your live run as done; on work and verify, an issue with a Done when list needs --evidence for each criterion, in order (run criteria lists them); - reads one from stdin",
+    about: "end your live run as done; on work and verify, an issue with a Done when list needs --evidence for each criterion, in order (run criteria lists them); - reads one from stdin. Done work moves an open issue to its project's review state",
     run: async (c) => runCall(c, "/complete", { note: c.v.note, evidence: await evidence(c) }, "completed"),
   },
   fail: {

@@ -141,23 +141,28 @@ function inline(s: string): DocNode[] {
 }
 
 /**
- * The comment a done run with criteria leaves on the issue: each "Done when" criterion with the run's evidence for it,
- * and the run's note. Each on its own line, as text with its inline code and bare URLs: a criterion's other Markdown (a
- * mention, a heading) is quoted, not repeated.
- */
-export function evidenceComment(stage: string, proof: readonly { criterion: string; evidence: string }[], note: string | null): string {
-  return comment([
-    paragraph([text(`Completed the ${stage} stage. Done when, with evidence:`)]),
-    list(proof.map((p) => [...inline(p.criterion), text(" — "), ...inline(p.evidence)])),
-    ...(note ? [paragraph(inline(note))] : []),
-  ]);
-}
-
-/**
  * Where a stop leaves the issue: moved to review, no review state to move to, or a move the pipeline refused (the
  * review state is for people only, say), with its words.
  */
 export type StopMove = { moved: true } | { moved: false; refused?: string };
+
+/** Why the issue stays where it is, when a move to review was not made: no review state, or the pipeline's refusal. */
+const stays = (move: StopMove & { moved: false }) =>
+  move.refused ? [text("The move to review was refused ("), ...inline(move.refused), text("), so the issue stays where it is")] : [text("The project has no review state, so the issue stays where it is")];
+
+/**
+ * The comment a done run with criteria leaves on the issue: each "Done when" criterion with the run's evidence for it,
+ * the run's note, and a refused move to review. Each on its own line, as text with its inline code and bare URLs: a
+ * criterion's other Markdown (a mention, a heading) is quoted, not repeated.
+ */
+export function evidenceComment(stage: string, proof: readonly { criterion: string; evidence: string }[], note: string | null, move: StopMove = { moved: true }): string {
+  return comment([
+    paragraph([text(`Completed the ${stage} stage. Done when, with evidence:`)]),
+    list(proof.map((p) => [...inline(p.criterion), text(" — "), ...inline(p.evidence)])),
+    ...(note ? [paragraph(inline(note))] : []),
+    ...(!move.moved && move.refused ? [paragraph([...stays(move), text(".")])] : []),
+  ]);
+}
 
 /** The comment a stop leaves on the issue: why, each attempt (outcome, note, the error's first line), and what resets it. */
 export function stopComment(stage: string, reason: string, tried: readonly Tried[], move: StopMove): string {
@@ -166,11 +171,8 @@ export function stopComment(stage: string, reason: string, tried: readonly Tried
     const parts = [[text(t.outcome)], t.note ? inline(t.note) : [], firstLine ? [text("error: "), ...inline(firstLine.trim().slice(0, 200))] : []].filter((p) => p.length);
     return parts.flatMap((p, i) => (i ? [text(" — "), ...p] : p));
   });
-  const claimAgain = `agents cannot claim the ${stage} stage again until a person changes its state.`;
   const next = move.moved
     ? [text(`Agents cannot claim the ${stage} stage again until a person moves the issue out of review.`)]
-    : move.refused
-      ? [text("The move to review was refused ("), ...inline(move.refused), text(`), so the issue stays where it is; ${claimAgain}`)]
-      : [text(`The project has no review state, so the issue stays where it is; ${claimAgain}`)];
+    : [...stays(move), text(`; agents cannot claim the ${stage} stage again until a person changes its state.`)];
   return comment([paragraph([text(`Stopped the ${stage} loop: ${reason}.`)]), paragraph([text("Tried:")]), list(items), paragraph(next)]);
 }

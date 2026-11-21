@@ -675,6 +675,11 @@ test("runs: claim, renew, complete and fail send their bodies; a stop is said; t
   assert.match((await cli(["runs", "CORE-1"])).out, /\nthe newest 1; older runs are not listed$/);
   answers = [{ body: { run: row({ outcome: "done", live: false, evidence: proof, endedAt: "2026-11-21T09:00:00.000Z" }), comment: { written: true } } }];
   assert.equal((await cli(["run", "complete", "CORE-1", "--evidence", "a", "--evidence", "b"])).out, "completed CORE-1 work attempt 1: done at 2026-11-21T09:00:00.000Z\ncommented the evidence for 2 criteria");
+  // Done work: where the issue went, or why it stayed (RSVA-638).
+  answers = [{ body: { run: row({ outcome: "done", live: false, endedAt: "2026-11-21T09:00:00.000Z" }), review: { movedTo: "In Review", moved: true } } }];
+  assert.equal((await cli(["run", "complete", "CORE-1"])).out, "completed CORE-1 work attempt 1: done at 2026-11-21T09:00:00.000Z\nCORE-1 now in In Review");
+  answers = [{ body: { run: row({ outcome: "done", live: false, endedAt: "2026-11-21T09:00:00.000Z" }), review: { movedTo: "In Review", moved: false, refused: "people set this state" } } }];
+  assert.match((await cli(["run", "complete", "CORE-1"])).out, /\nCORE-1 stays where it was: the move to In Review was refused: people set this state$/);
 
   seen.length = 0;
   for (const argv of [["run", "fail", "CORE-1"], ["run", "claim", "CORE-1", "--lease", "1d"], ["run", "renew", "CORE-1", "--lease", "0"], ["run", "complete", "CORE-1", "--evidence", "-", "--evidence", "-"]])

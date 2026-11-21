@@ -19,7 +19,14 @@ const f = apiFixture(async (ws) => {
 type Run = { id: string; issue: string; stage: string; attempt: number; agent: string; outcome: string | null; live: boolean; leaseUntil: string; note: string | null; error: string | null; evidence: { criterion: string; evidence: string }[] | null };
 type Answer = {
   status: number;
-  body: Record<string, unknown> & { run?: Run; stop?: { reason: string; movedTo: string | null; moved: boolean; written: boolean; refused?: string }; comment?: { written: boolean }; message?: string; error?: string };
+  body: Record<string, unknown> & {
+    run?: Run;
+    stop?: { reason: string; movedTo: string | null; moved: boolean; written: boolean; refused?: string };
+    comment?: { written: boolean };
+    review?: { movedTo: string; moved: boolean; refused?: string };
+    message?: string;
+    error?: string;
+  };
 };
 
 const call = async (as: typeof fetch, method: string, path: string, body?: unknown): Promise<Answer> => {
@@ -300,11 +307,20 @@ test("a stop made by a person whose claim found the lapsed lease is not read as 
   assert.equal((await claim(f.agent, key)).status, 201, "a person's own change after it resets");
 });
 
-test("a refused move to review still leaves the comment of what was tried, saying the issue stays", async () => {
-  const key = await newIssue("Review is for people");
+/** Runs `then` with CORE's review state for people only: the pipeline refuses an agent's move there. */
+async function reviewForPeople(then: () => Promise<void>): Promise<void> {
   const review = await db.select({ id: schema.workflowState.id }).from(schema.workflowState).innerJoin(schema.project, eq(schema.project.id, schema.workflowState.projectId)).where(and(eq(schema.project.workspaceId, f.ws.workspaceId), eq(schema.project.key, "CORE"), eq(schema.workflowState.name, "In Review")));
   await db.update(schema.workflowState).set({ onlyPeople: true }).where(eq(schema.workflowState.id, review[0]!.id));
   try {
+    await then();
+  } finally {
+    await db.update(schema.workflowState).set({ onlyPeople: false }).where(eq(schema.workflowState.id, review[0]!.id));
+  }
+}
+
+test("a refused move to review still leaves the comment of what was tried, saying the issue stays", async () => {
+  const key = await newIssue("Review is for people");
+  await reviewForPeople(async () => {
     await claim(f.agent, key);
     await fail(f.agent, key, "same");
     await claim(f.agent, key);
@@ -314,9 +330,7 @@ test("a refused move to review still leaves the comment of what was tried, sayin
     assert.notEqual(await stateOf(key), "In Review");
     const [comment] = await stopComments(key);
     assert.match(comment!.body, /The move to review was refused \(.*\), so the issue stays where it is/);
-  } finally {
-    await db.update(schema.workflowState).set({ onlyPeople: false }).where(eq(schema.workflowState.id, review[0]!.id));
-  }
+  });
 });
 
 test("archived issues take no claim or renew", async () => {
@@ -364,4 +378,53 @@ test("volume: criteria past 50 are refused on complete and cut in the list; evid
   await db.insert(schema.run).values(Array.from({ length: 52 }, (_, i) => ({ workspaceId: f.ws.workspaceId, issueId, agentId: f.ws.agentId, stage: "triage" as const, attempt: i + 1, leaseUntil: lease, outcome: "done" as const })));
   const page = (await call(f.agent, "GET", runs(busy))).body;
   assert.deepEqual([(page.runs as Run[]).length, page.more], [50, true]);
+});
+
+test("a done work run moves the issue to review with its evidence, in one transaction; a closed issue stays closed", async () => {
+  const key = await newIssue("Finished work waits for a person", { description: "## Done when\n\n- it works" });
+  await claim(f.agent, key);
+  const done = await complete(f.agent, key, { evidence: ["it does"] });
+  assert.deepEqual([done.status, done.body.review, done.body.comment], [200, { movedTo: "In Review", moved: true }, { written: true }], JSON.stringify(done.body));
+  assert.equal(await stateOf(key), "In Review");
+  const [issueId] = (await db.select({ id: schema.issue.id }).from(schema.issue).where(and(eq(schema.issue.workspaceId, f.ws.workspaceId), eq(schema.issue.title, "Finished work waits for a person")))).map((r) => r.id);
+  const writes = await db
+    .select({ model: schema.syncAction.model, txId: schema.syncAction.txId })
+    .from(schema.syncAction)
+    .where(and(eq(schema.syncAction.workspaceId, f.ws.workspaceId), dsql`(${schema.syncAction.modelId} = ${issueId} and ${schema.syncAction.data} ? 'stateId') or (${schema.syncAction.model} = 'Comment' and ${schema.syncAction.data}->>'issueId' = ${issueId})`))
+    .orderBy(schema.syncAction.id);
+  assert.deepEqual(writes.map((w) => w.model).sort(), ["Comment", "Issue", "Issue"], "created, moved, commented");
+  assert.equal(new Set(writes.slice(-2).map((w) => w.txId)).size, 1, "the move and the comment are one transaction");
+
+  const triaged = await newIssue("Triage moves nothing");
+  await claim(f.agent, triaged, { stage: "triage" });
+  assert.deepEqual([(await complete(f.agent, triaged)).body.review, await stateOf(triaged)], [undefined, "Backlog"]);
+
+  const closed = await newIssue("Done already");
+  await claim(f.agent, closed);
+  assert.equal((await call(f.owner, "PATCH", `/issues/${closed}`, { state: "Done" })).status, 200);
+  assert.deepEqual([(await complete(f.agent, closed)).body.review, await stateOf(closed)], [undefined, "Done"]);
+});
+
+test("a done work run in a project without a review state leaves the issue where it was", async () => {
+  assert.equal((await call(f.owner, "POST", "/projects", { key: "FLAT", name: "Flat" })).status, 201);
+  const key = await newIssue("No review here", { project: "FLAT", state: "In Progress" });
+  await claim(f.agent, key);
+  const done = await complete(f.agent, key, { note: "PR #4" });
+  assert.deepEqual([done.status, done.body.review], [200, undefined], JSON.stringify(done.body));
+  assert.equal(await stateOf(key), "In Progress");
+});
+
+test("a done work run whose move to review is refused still leaves the evidence, saying the issue stays", async () => {
+  const key = await newIssue("Finished, review for people", { description: "## Done when\n\n- it works", state: "In Progress" });
+  await reviewForPeople(async () => {
+    await claim(f.agent, key);
+    const done = await complete(f.agent, key, { evidence: ["it does"] });
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.deepEqual([done.body.review?.moved, done.body.comment], [false, { written: true }], JSON.stringify(done.body));
+    assert.match(done.body.review!.refused!, /people set this state/);
+    assert.equal(await stateOf(key), "In Progress");
+    const [comment, ...more] = await commentsStarting(key, "Completed the");
+    assert.equal(more.length, 0);
+    assert.match(comment!.body, /^1\. it works — it does\n\nThe move to review was refused \(.*people set this state.*\), so the issue stays where it is\.$/m);
+  });
 });

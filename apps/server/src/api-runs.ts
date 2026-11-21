@@ -1,7 +1,7 @@
 // Agent runs over REST (RSVA-636): an agent claims an issue's stage with a lease, renews it, and ends it done or failed.
 // The rules are runs.ts; this is their rows and their answers. Runs are server-only, outside the log and the snapshot,
-// except what a stop writes: the move to review and the comment go through the write pipeline as the caller, so the
-// issue's history, the inboxes and open tabs see them as any other change.
+// except what a stop or a finished work run writes: the move to review and the comment go through the write pipeline as
+// the caller, so the issue's history, the inboxes and open tabs see them as any other change.
 //
 // One open run per issue: a partial unique index (run_live_index) holds it, so two claims racing end with one run and a
 // 409 for the other, whatever they read first. A lapsed lease frees the issue for others but stays its holder's: renew,
@@ -11,18 +11,20 @@
 //
 // Completion needs evidence: a `work` or `verify` run of an issue whose description has a "Done when" list (done-when.ts)
 // ends done only with one text per criterion; the run keeps them with the criteria as they read then, and the issue gets
-// one comment of them as the caller.
+// one comment of them as the caller. A done `work` run also moves the issue to review (writeDone): a finished work stage
+// waits for a person there, as a stopped one does.
 //
 // The reset after a stop (the simplest signal that is a person's act): the log has a change of the issue's state made
 // by a person (a human user, in the app or with their own token) after the log's number when the run stopped
 // (`stopSyncId`), in a transaction other than the stop's own (`stopTxId`, chosen when it stopped and given to the
 // pipeline). Moving the issue out of review is that change; an agent's own move is not, and neither is the stop's move
-// made by a person whose claim found the lapsed lease. Nothing is written for it: the claim reads the log.
+// made by a person whose claim found the lapsed lease. A done work run's move cannot reset its own stage: a run exists
+// only after the stop was reset, and a later stop's number is past it. Nothing is written for it: the claim reads the log.
 import type { DocNode } from "@rsva/editor/doc";
 import { toMarkdown } from "@rsva/editor/markdown";
 import { can, refusal } from "@rsva/policy";
 import { uuidv7 } from "@rsva/protocol";
-import { COMMENT_MAX, RUN_STAGES, startedStage, type RunOutcome, type RunStage } from "@rsva/schema/models";
+import { COMMENT_MAX, isClosedGroup, RUN_STAGES, startedStage, type RunOutcome, type RunStage } from "@rsva/schema/models";
 import { and, asc, desc, eq, gt, isNull, ne, or, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { loadNames } from "./api-names.ts";
@@ -153,40 +155,51 @@ async function writeAfter(req: FastifyRequest, w: Access, ops: Op[], txId?: stri
 const commentOp = (issueId: string, body: string): Op => ({ op: "create", m: "Comment", id: uuidv7(), set: { issueId, body } });
 
 /**
- * What a stop did on the issue, for the answer: the review state (null: none to move to), whether the issue moved there,
- * and whether the comment was written.
+ * What a move to review with its comment did on the issue, for the answer: the review state (null: none to move to),
+ * whether the issue is there now, and whether the comment was written.
  */
-interface StopView {
-  reason: string;
+interface ReviewView {
   movedTo: string | null;
   moved: boolean;
   written: boolean;
-  /** The pipeline's refusal of the move, or of the comment when it was not written: the run stays stopped all the same. */
+  /** The pipeline's refusal of the move, or of the comment when it was not written. */
   refused?: string;
 }
 
 /**
- * The stop on the issue, as the caller (the agent whose failure stopped it, or whoever's claim found the lease passed):
- * to the project's review state (the started group's second state, startedStage) and one comment listing what was tried,
- * in one transaction of the pipeline under the run's `stopTxId`. When the pipeline refuses that one (the review state is
- * for people only, say), the comment goes alone in a second, saying the issue stays where it is, so what was tried is not
- * lost with the move. A refusal of the comment too leaves the run stopped and says so.
+ * The issue to the project's review state (the started group's second state, startedStage) with one comment, as the
+ * caller, in one transaction of the pipeline (under `txId` when given). `moves` says whether the issue's state now
+ * should move at all; when not, or the project has no review state, the comment goes alone. When the pipeline refuses
+ * the two (the review state is for people only, say), the comment goes alone in a second, told of the refusal, so what
+ * it says is not lost with the move. A refusal of the comment too is said in the answer.
  */
-async function writeStop(req: FastifyRequest, found: Found, stop: Stop): Promise<StopView> {
+async function writeReview(req: FastifyRequest, found: Found, comment: ((move: StopMove) => string) | null, moves: (group: string) => boolean, txId?: string): Promise<ReviewView> {
   const w = found.w;
   const n = await loadNames(w.workspaceId);
   const states = [...n.states.values()].filter((s) => s.projectId === found.issue.projectId);
-  const review = states.find((s) => startedStage(states, s.id) === "review");
   const [now] = await db.select({ stateId: issue.stateId }).from(issue).where(eq(issue.id, found.issue.id));
-  const comment = (move: StopMove) => commentOp(found.issue.id, stopComment(stop.run.stage, stop.reason, stop.tried, move));
-  const out = { reason: stop.reason, movedTo: review?.name ?? null };
-  const move: Op[] = review && now?.stateId !== review.id ? [{ op: "update", m: "Issue", id: found.issue.id, set: { stateId: review.id } }] : [];
-  const both = await writeAfter(req, w, [...move, comment(review ? { moved: true } : { moved: false })], stop.run.stopTxId ?? undefined);
-  if (!("refused" in both)) return { ...out, moved: !!review, written: true };
-  if (!move.length) return { ...out, moved: !!review, written: false, refused: both.refused };
-  const alone = await writeAfter(req, w, [comment({ moved: false, refused: both.refused })]);
+  const target = now && moves(n.states.get(now.stateId)?.group ?? "") ? states.find((s) => startedStage(states, s.id) === "review") : undefined;
+  const comments = (move: StopMove) => (comment ? [commentOp(found.issue.id, comment(move))] : []);
+  const out = { movedTo: target?.name ?? null };
+  const move: Op[] = target && now?.stateId !== target.id ? [{ op: "update", m: "Issue", id: found.issue.id, set: { stateId: target.id } }] : [];
+  const ops = [...move, ...comments(target ? { moved: true } : { moved: false })];
+  if (!ops.length) return { ...out, moved: !!target, written: false };
+  const both = await writeAfter(req, w, ops, txId);
+  if (!("refused" in both)) return { ...out, moved: !!target, written: !!comment };
+  if (!move.length) return { ...out, moved: !!target, written: false, refused: both.refused };
+  const alone = comment ? await writeAfter(req, w, comments({ moved: false, refused: both.refused })) : both;
   return { ...out, moved: false, written: !("refused" in alone), refused: both.refused };
 }
+
+/**
+ * The stop on the issue, as the caller (the agent whose failure stopped it, or whoever's claim found the lease passed):
+ * to review with one comment listing what was tried, under the run's `stopTxId`, from whatever state the issue is in.
+ * The run stays stopped whatever the pipeline refuses.
+ */
+const writeStop = async (req: FastifyRequest, found: Found, stop: Stop) => ({
+  reason: stop.reason,
+  ...(await writeReview(req, found, (move) => stopComment(stop.run.stage, stop.reason, stop.tried, move), () => true, stop.run.stopTxId ?? undefined)),
+});
 
 /** A person changed the issue's state after the stop, in a transaction other than the stop's own: the reset of a stopped loop. */
 async function resetSince(workspaceId: string, issueId: string, stopped: Row): Promise<boolean> {
@@ -308,9 +321,21 @@ async function endOwn(req: Req, ending: (b: Record<string, unknown>) => Ending) 
   if ("refused" in got) throw new HttpError(400, "invalid", got.refused);
   if ("other" in got) throw new HttpError(403, "forbidden", `the run on ${found.issue.key} is held by ${(await emailOf(got.other.agentId)) ?? "someone else"}`);
   const stop = got.stop ? await writeStop(req, found, got.stop) : undefined;
-  const proved = proof.length ? await writeAfter(req, found.w, [commentOp(found.issue.id, evidenceComment(got.row.stage, proof, got.row.note))]) : undefined;
-  const comment = proved && ("refused" in proved ? { written: false, refused: proved.refused } : { written: true });
-  return { run: await view(got.row, found), ...(stop ? { stop } : {}), ...(comment ? { comment } : {}) };
+  return { run: await view(got.row, found), ...(stop ? { stop } : {}), ...(what.kind === "done" ? await writeDone(req, found, got.row, proof) : {}) };
+}
+
+/**
+ * What a done run writes on the issue, as the caller: a work run moves it to review (from an open state other than
+ * review: a closed issue stays closed), with the evidence comment when there is evidence, in one transaction; a refused
+ * move leaves the comment alone, saying so. Another stage writes the comment only.
+ */
+async function writeDone(req: FastifyRequest, found: Found, row: Row, proof: Proof[]) {
+  const work = row.stage === "work";
+  if (!work && !proof.length) return {};
+  const r = await writeReview(req, found, proof.length ? (move) => evidenceComment(row.stage, proof, row.note, move) : null, (group) => work && !isClosedGroup(group));
+  const comment = proof.length ? { comment: r.written ? { written: true } : { written: false, refused: r.refused } } : {};
+  const review = r.movedTo ? { review: { movedTo: r.movedTo, moved: r.moved, ...(r.moved ? {} : { refused: r.refused }) } } : {};
+  return { ...comment, ...review };
 }
 
 export function runRoutes(app: FastifyInstance): void {
