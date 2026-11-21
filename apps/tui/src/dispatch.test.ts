@@ -299,15 +299,66 @@ test("Claude that never shows in `claude agents` fails the start, and the Rex se
   assert.deepEqual(w.wrote, []);
 });
 
-test("an issue with a live agent, or its clone already there, is not dispatched again", async (t) => {
+/** A clone as a dispatch leaves it, in files: its .git with the origin and HEAD on `branch`, a commit of the agent's. */
+async function cloneAt(dir: string, branch: string, origin = "https://github.com/r3cursiva/recursiva.git"): Promise<void> {
+  await mkdir(join(dir, ".git", "refs", "heads"), { recursive: true });
+  await writeFile(join(dir, ".git", "HEAD"), `ref: refs/heads/${branch}\n`);
+  await writeFile(join(dir, ".git", "config"), `[core]\n\tbare = false\n[remote "origin"]\n\turl = ${origin}\n\tfetch = +refs/heads/main:refs/remotes/origin/main\n[branch "${branch}"]\n\tremote = origin\n`);
+  await writeFile(join(dir, ".git", "refs", "heads", branch), `${"a".repeat(40)}\n`);
+}
+
+test("an issue with a live agent is not dispatched again; a clone that is not this repository's on the branch is refused before the claim", async (t) => {
   const w = await world(t);
   const p = planOf(issue, choice, w.config);
   await dispatch(p, issue, w.deps);
   w.live.add("session:1");
   await assert.rejects(dispatch(planOf(issue, choice, w.config), issue, w.deps), /already has an agent/);
+  await cloneAt(p.worktree, p.branch);
+  await assert.rejects(dispatch(planOf(issue, choice, w.config), issue, w.deps), /already has an agent/, "a clone in use is not reused");
   w.live.clear();
-  await mkdir(p.worktree, { recursive: true });
-  await assert.rejects(dispatch(planOf(issue, choice, w.config), issue, w.deps), /exists: the issue was dispatched before/);
+  await rm(join(p.worktree, ".git"), { recursive: true });
+  await assert.rejects(dispatch(planOf(issue, choice, w.config), issue, w.deps), /exists and is not a git clone: move it away/);
+  await cloneAt(p.worktree, "another-branch");
+  await assert.rejects(dispatch(planOf(issue, choice, w.config), issue, w.deps), new RegExp(`exists and is not on the branch ${p.branch}`));
+  await cloneAt(p.worktree, p.branch, "https://github.com/someone/else.git");
+  await assert.rejects(dispatch(planOf(issue, choice, w.config), issue, w.deps), /exists and is not a clone of https:\/\/github\.com\/r3cursiva\/recursiva\.git/);
+  assert.deepEqual(w.server.log, ["claim PLNR-305 work"], "no refusal spent an attempt");
+  assert.ok(existsSync(join(p.worktree, ".git", "HEAD")), "a refusal leaves the folder as it was");
+});
+
+test("a dispatch after the first session ended reuses its clone: branch and commits kept, no git or install on it, a new session", async (t) => {
+  const w = await world(t);
+  const first = await dispatched(w);
+  await cloneAt(first.worktree, first.branch);
+  // The repository installs its dependencies on a new clone; a reused one has them.
+  await writeFile(join(w.repo, "pnpm-lock.yaml"), "");
+  w.live.clear();
+  const p = planOf(issue, choice, w.config);
+  assert.equal(p.reuse, true);
+  assert.match(p.prompt, /An earlier run worked in this clone: its commits may be on the branch\. Read `git status` and `git log`, and `git fetch origin`, before you redo any of it\./);
+  assert.doesNotMatch(planOf({ ...issue, key: "PLNR-306" }, choice, w.config).prompt, /earlier run/);
+  const names = stepTexts(p);
+  assert.deepEqual([names.worktree, names.install], [`reuse the clone in .claude/worktrees/${p.branch}, its branch and commits kept`, null]);
+  const run = await dispatch(p, issue, w.deps);
+  assert.ok(!w.calls.some((c) => c.includes(`-C ${p.worktree}`) || c.includes(" clone ") || c.startsWith("pnpm")), "nothing runs on the agent's clone");
+  assert.ok(w.calls.some((c) => c.startsWith(`rex new ${p.session}`)));
+  assert.ok(existsSync(join(p.worktree, "work.ts")) && existsSync(join(p.worktree, ".git", "refs", "heads", p.branch)), "the earlier work is where it was");
+  assert.deepEqual(w.server.log.filter((l) => l.startsWith("claim")), ["claim PLNR-305 work", "claim PLNR-305 work"]);
+  assert.deepEqual([run.sessionId, (await w.runs.all()).map((r) => r.sessionId)], [p.sessionId, [p.sessionId]]);
+  await assert.rejects(stat(join(w.config.runs, `${first.sessionId}.json`)), /ENOENT/, "the earlier session's tokens are gone");
+  assert.ok(existsSync(p.settings));
+});
+
+test("a reused clone stays when the dispatch fails: only the new session's parts are undone", async (t) => {
+  const w = await world(t);
+  const first = await dispatched(w);
+  await cloneAt(first.worktree, first.branch);
+  w.live.clear();
+  w.fail.add("rex new");
+  const p = planOf(issue, choice, w.config);
+  await assert.rejects(dispatch(p, issue, w.deps), /rex new failed/);
+  assert.ok(existsSync(join(p.worktree, "work.ts")), "the earlier work is kept");
+  assert.ok(!w.steps.at(-1)!.some((s) => s.text.startsWith("clone removed")));
 });
 
 test("a refused planner write leaves the agent working: the run is kept, the step says it failed", async (t) => {
