@@ -21,6 +21,7 @@ import {
   memberList,
   projectCard,
   projectList,
+  criteriaList,
   runLine,
   runList,
   similarLine,
@@ -125,6 +126,7 @@ const FLAGS = {
   lease: {},
   note: {},
   error: {},
+  evidence: { multiple: true },
 } as const satisfies Record<string, FlagSpec>;
 
 type Flag = keyof typeof FLAGS;
@@ -565,14 +567,27 @@ function lease(v: string | undefined): number | undefined {
 interface RunAnswer {
   run: RunRow;
   stop?: { reason: string; movedTo: string | null; written: boolean; refused?: string };
+  /** A completion with evidence: its comment on the issue. */
+  comment?: { written: boolean; refused?: string };
 }
 
-/** A run's answer in words; a stop says why, where the issue went, and whether that could be written. */
+/** A run's answer in words; a stop says why, where the issue went, and whether that could be written; evidence, its comment. */
 const ranLine = (c: Ctx, says: string) => (d: RunAnswer) =>
   [
     done(c, `${says} ${runLine(d.run)}`),
     ...(d.stop ? [`stopped the ${d.run.stage} loop: ${d.stop.reason}${d.stop.movedTo ? `; moved to ${d.stop.movedTo}` : ""}${d.stop.written ? "" : `; not written: ${d.stop.refused}`}`] : []),
+    ...(d.comment ? [d.comment.written ? `commented the evidence for ${plural(d.run.evidence?.length ?? 0, "criterion", "criteria")}` : `the evidence comment was not written: ${d.comment.refused}`] : []),
   ].join("\n");
+
+/** `--evidence T` once per criterion, in order; one of them may be `-`, the text on stdin. */
+async function evidence(c: Ctx): Promise<string[] | undefined> {
+  const given = c.v.evidence;
+  if (!given) return undefined;
+  if (given.filter((e) => e === "-").length > 1) throw new UsageError("--evidence: only one of them can be -, the text on stdin");
+  return Promise.all(given.map(async (e) => (await text(c, e))!));
+}
+
+const runsOf = (c: Ctx) => c.api.request<{ runs: RunRow[]; criteria: string[] }>("GET", issuePath(c, "/runs"));
 
 const runCall = (c: Ctx, tail: string, body: Record<string, unknown>, says: string) =>
   wrote(c, c.api.request<RunAnswer>("POST", issuePath(c, `/runs${tail}`), { body: given(body) }), ranLine(c, says));
@@ -585,7 +600,12 @@ const runCommands: Record<string, Command> = {
     run: (c) => runCall(c, "", { stage: c.v.stage, lease: lease(c.v.lease) }, "claimed"),
   },
   renew: { args: "<key>", flags: "[--lease 1h]", about: "extend your live run's lease from now", run: (c) => runCall(c, "/renew", { lease: lease(c.v.lease) }, "renewed") },
-  complete: { args: "<key>", flags: "[--note T]", about: "end your live run as done", run: (c) => runCall(c, "/complete", { note: c.v.note }, "completed") },
+  complete: {
+    args: "<key>",
+    flags: "[--evidence T]... [--note T]",
+    about: "end your live run as done; on work and verify, an issue with a Done when list needs --evidence for each criterion, in order (run criteria lists them); - reads one from stdin",
+    run: async (c) => runCall(c, "/complete", { note: c.v.note, evidence: await evidence(c) }, "completed"),
+  },
   fail: {
     args: "<key>",
     flags: "--error T [--note T]",
@@ -595,12 +615,17 @@ const runCommands: Record<string, Command> = {
       return runCall(c, "/fail", { error: await text(c, c.v.error), note: c.v.note }, "failed");
     },
   },
+  criteria: {
+    args: "<key>",
+    about: "the issue's Done when criteria, numbered: what complete needs evidence for, in this order",
+    run: async (c) => shown(c, await runsOf(c), (d) => criteriaList(d.criteria, c.style)),
+  },
 };
 
 const runs: Command = {
   args: "<key>",
   about: "an issue's agent runs, newest first: attempt, stage, outcome, agent, when, note",
-  run: async (c) => shown(c, await c.api.request<{ runs: RunRow[] }>("GET", issuePath(c, "/runs")), (d) => runList(d.runs, c.style)),
+  run: async (c) => shown(c, await runsOf(c), (d) => runList(d.runs, c.style)),
 };
 
 const cycles: Command = {
@@ -880,7 +905,7 @@ const help: Command = {
 };
 
 /** Every command, in the order the help lists them. */
-const COMMANDS: Record<string, Command | Group> = { ...issueCommands, inbox, run: { about: "an agent's run on an issue: claim, renew, complete, fail", commands: runCommands }, runs, cycles, cycle: cycleGroup, ...settingsCommands, tui, login, logout, completion, api, help };
+const COMMANDS: Record<string, Command | Group> = { ...issueCommands, inbox, run: { about: "an agent's run on an issue: claim, renew, complete, fail, criteria", commands: runCommands }, runs, cycles, cycle: cycleGroup, ...settingsCommands, tui, login, logout, completion, api, help };
 
 const isGroup = (x: Command | Group): x is Group => "commands" in x;
 

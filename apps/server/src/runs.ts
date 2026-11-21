@@ -79,11 +79,23 @@ export interface Tried {
 /** Text from a run as plain Markdown text: no link, mention or emphasis it could carry. */
 const literal = (s: string) => s.replace(MARKDOWN_PUNCTUATION, "\\$&");
 
+/** A run's own text on one line, as plain Markdown text. */
+const line = (s: string) => literal(s.replace(/\s+/g, " ").trim());
+
+/**
+ * The comment a done run with criteria leaves on the issue: each "Done when" criterion with the run's evidence for it,
+ * and the run's note. All of it as plain text: a criterion's own Markdown (a mention, a link) is quoted, not repeated.
+ */
+export function evidenceComment(stage: string, proof: readonly { criterion: string; evidence: string }[], note: string | null): string {
+  const lines = proof.map((p, i) => `${i + 1}. ${line(p.criterion)} — ${line(p.evidence)}`);
+  return [`Completed the ${stage} stage. Done when, with evidence:`, "", ...lines, ...(note ? ["", line(note)] : [])].join("\n");
+}
+
 /** The comment a stop leaves on the issue: why, each attempt (outcome, note, the error's first line), and what resets it. */
 export function stopComment(stage: string, reason: string, tried: readonly Tried[], movedToReview: boolean): string {
   const lines = tried.map((t, i) => {
     const firstLine = t.error?.split("\n").find((l) => l.trim())?.trim().slice(0, 200);
-    const parts = [t.outcome, t.note && literal(t.note.replace(/\s+/g, " ")), firstLine && `error: ${literal(firstLine)}`].filter(Boolean);
+    const parts = [t.outcome, t.note && line(t.note), firstLine && `error: ${literal(firstLine)}`].filter(Boolean);
     return `${i + 1}. ${parts.join(" — ")}`;
   });
   const next = movedToReview

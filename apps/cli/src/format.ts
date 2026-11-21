@@ -495,6 +495,8 @@ export interface RunRow {
   outcome: string | null;
   note: string | null;
   error: string | null;
+  /** A done run's criteria with its evidence for each. */
+  evidence?: { criterion: string; evidence: string }[] | null;
   endedAt: string | null;
 }
 
@@ -505,15 +507,26 @@ const runState = (r: RunRow) => r.outcome ?? (r.live ? "live" : "expired");
 /** One run in a line: its issue, stage and attempt, how it stands, and until or since when. */
 export const runLine = (r: RunRow): string => `${r.issue} ${r.stage} attempt ${r.attempt}: ${runState(r)} ${r.outcome ? `at ${r.endedAt}` : `until ${r.leaseUntil}`}`;
 
-/** An issue's runs, newest first: attempt, stage, outcome, agent, when, then the note or the error's first line. */
-export const runList = (runs: readonly RunRow[], s: Style = PLAIN): string =>
-  runs.length
-    ? table(
-        runs.map((r) => [`#${r.attempt}`, r.stage, runState(r), r.agent ?? "?", minute(r.endedAt ?? r.leaseUntil, s), r.note ?? r.error?.split("\n")[0] ?? ""]),
-        s,
-        [s.gray, undefined, (cell) => word(s, OUTCOME, cell), undefined, s.gray],
-      )
-    : s.gray("no runs");
+/** Numbered lines, the number in grey. */
+const numbered = (items: readonly string[], s: Style, indent = "") => items.map((t, i) => `${indent}${s.gray(`${i + 1}.`)} ${oneLine(t)}`);
+
+/**
+ * An issue's runs, newest first: attempt, stage, outcome, agent, when, then the note or the error's first line; under a
+ * done run with evidence, each criterion with it.
+ */
+export function runList(runs: readonly RunRow[], s: Style = PLAIN): string {
+  if (!runs.length) return s.gray("no runs");
+  const rows = lines(
+    runs.map((r) => [`#${r.attempt}`, r.stage, runState(r), r.agent ?? "?", minute(r.endedAt ?? r.leaseUntil, s), r.note ?? r.error?.split("\n")[0] ?? ""]),
+    s,
+    [s.gray, undefined, (cell) => word(s, OUTCOME, cell), undefined, s.gray],
+  );
+  return rows.flatMap((row, i) => [row, ...numbered((runs[i]!.evidence ?? []).map((p) => `${p.criterion} — ${p.evidence}`), s, "    ")]).join("\n");
+}
+
+/** An issue's Done when criteria, numbered; none said so. */
+export const criteriaList = (criteria: readonly string[], s: Style = PLAIN): string =>
+  criteria.length ? numbered(criteria, s).join("\n") : s.gray("no Done when list: complete needs no evidence");
 
 /** The workspace and whose token this is: a person's or the agent's, its role and scope, what it may change, and what members may beyond issues. */
 export function workspaceCard(w: WorkspaceInfo, s: Style = PLAIN): string {

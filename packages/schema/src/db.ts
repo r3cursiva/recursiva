@@ -375,6 +375,8 @@ export const run = pgTable(
     /** A failed run's error as sent (cut to ERROR_MAX), and its normalised hash: equal for the same error twice. */
     error: text(),
     errorFingerprint: text(),
+    /** A done run of a stage with criteria: each "Done when" criterion as it read then, with the run's evidence for it. */
+    evidence: jsonb().$type<{ criterion: string; evidence: string }[]>(),
     /** A stopped run: the log number its move to review and comment were written at; a person's change of state after it resets the loop. */
     stopSyncId: bigint({ mode: "number" }),
     createdAt: ts().notNull().defaultNow(),

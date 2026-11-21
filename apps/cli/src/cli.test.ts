@@ -643,6 +643,7 @@ test("runs: claim, renew, complete and fail send their bodies; a stop is said; t
     [["run", "renew", "CORE-1", "--lease", "45"], `${path}/renew`, { lease: 45 }],
     [["run", "complete", "CORE-1", "--note", "PR #3"], `${path}/complete`, { note: "PR #3" }],
     [["run", "fail", "CORE-1", "--error", "-", "--note", "n"], `${path}/fail`, { error: "boom", note: "n" }],
+    [["run", "complete", "CORE-1", "--evidence", "CI green", "--evidence", "-", "--note", "PR #3"], `${path}/complete`, { evidence: ["CI green", "boom"], note: "PR #3" }],
   ];
   for (const [argv, url, body] of cases) {
     answers = [{ body: { run: row() } }];
@@ -656,12 +657,24 @@ test("runs: claim, renew, complete and fail send their bodies; a stop is said; t
   answers = [{ body: { run: row({ outcome: "stopped", attempt: 3, live: false, endedAt: "2026-11-21T09:00:00.000Z" }), stop: { reason: "3 failed attempts", movedTo: "In Review", written: true } } }];
   assert.equal((await cli(["run", "fail", "CORE-1", "--error", "x"])).out, "failed CORE-1 work attempt 3: stopped at 2026-11-21T09:00:00.000Z\nstopped the work loop: 3 failed attempts; moved to In Review");
 
-  answers = [{ body: { runs: [row(), row({ attempt: 1, outcome: "failed", live: false, error: "tests failed\nat x", endedAt: "2026-11-21T08:00:00.000Z" }), row({ live: false })] } }];
+  answers = [{ body: { runs: [row(), row({ attempt: 1, outcome: "failed", live: false, error: "tests failed\nat x", endedAt: "2026-11-21T08:00:00.000Z" }), row({ live: false })], criteria: [] } }];
   assert.equal((await cli(["runs", "CORE-1"])).out, "#1  work  live     bot@x.dev  2026-11-21 10:00\n#1  work  failed   bot@x.dev  2026-11-21 08:00  tests failed\n#1  work  expired  bot@x.dev  2026-11-21 10:00");
   assert.equal(seen.at(-1)!.url, path);
 
+  // Done when: the criteria numbered, the evidence under the run that gave it, the comment said.
+  const proof = [{ criterion: "tests pass", evidence: "CI run 12" }, { criterion: "docs\nupdated", evidence: "docs/x.md" }];
+  answers = [{ body: { runs: [row({ outcome: "done", live: false, note: "PR #3", evidence: proof, endedAt: "2026-11-21T09:00:00.000Z" })], criteria: ["tests pass", "docs updated"] } }];
+  assert.equal((await cli(["runs", "CORE-1"])).out, "#1  work  done  bot@x.dev  2026-11-21 09:00  PR #3\n    1. tests pass — CI run 12\n    2. docs updated — docs/x.md");
+  answers = [{ body: { runs: [], criteria: ["tests pass", "docs updated"] } }];
+  assert.equal((await cli(["run", "criteria", "CORE-1"])).out, "1. tests pass\n2. docs updated");
+  answers = [{ body: { runs: [], criteria: [] } }];
+  assert.equal((await cli(["run", "criteria", "CORE-1"])).out, "no Done when list: complete needs no evidence");
+  answers = [{ body: { run: row({ outcome: "done", live: false, evidence: proof, endedAt: "2026-11-21T09:00:00.000Z" }), comment: { written: true } } }];
+  assert.equal((await cli(["run", "complete", "CORE-1", "--evidence", "a", "--evidence", "b"])).out, "completed CORE-1 work attempt 1: done at 2026-11-21T09:00:00.000Z\ncommented the evidence for 2 criteria");
+
   seen.length = 0;
-  for (const argv of [["run", "fail", "CORE-1"], ["run", "claim", "CORE-1", "--lease", "1d"], ["run", "renew", "CORE-1", "--lease", "0"]]) assert.equal((await cli(argv)).code, 2, argv.join(" "));
+  for (const argv of [["run", "fail", "CORE-1"], ["run", "claim", "CORE-1", "--lease", "1d"], ["run", "renew", "CORE-1", "--lease", "0"], ["run", "complete", "CORE-1", "--evidence", "-", "--evidence", "-"]])
+    assert.equal((await cli(argv)).code, 2, argv.join(" "));
   assert.equal(seen.length, 0);
 });
 
@@ -972,7 +985,7 @@ probe() { words=("$@"); CURRENT=$#; PREFIX=$words[CURRENT]; IPREFIX=; _rsva; pri
     [["update", "CORE-1", "--priority", ""], "|urgent high medium low none"],
     [["create", "x", "-p", ""], ""],
     [["issues", "is:"], "is:|blocked blocking duplicate ready"],
-    [["run", ""], "describe|claim renew complete fail"],
+    [["run", ""], "describe|claim renew complete fail criteria"],
     [["run", "claim", "CORE-1", "--stage", ""], "|triage work verify"],
     [["my", "-group:completed,c"], "-group:completed,|backlog unstarted started completed cancelled"],
     [["issues", "-la"], `-|${keys}`],

@@ -7,9 +7,15 @@
 // 409 for the other, whatever they read first. An expired lease is found, not timed: the next claim, renew, complete or
 // fail of the issue closes the run as `expired` in its transaction, and that counts as a failed attempt.
 //
+// Completion needs evidence: a `work` or `verify` run of an issue whose description has a "Done when" list (done-when.ts)
+// ends done only with one text per criterion; the run keeps them with the criteria as they read then, and the issue gets
+// one comment of them as the caller.
+//
 // The reset after a stop (the simplest signal that is a person's act): the log has a change of the issue's state made
 // by a person (a human user, in the app or with their own token) after the stop was written (`stopSyncId`). Moving the
 // issue out of review is that change; an agent's own move is not. Nothing is written for it: the claim reads the log.
+import type { DocNode } from "@rsva/editor/doc";
+import { toMarkdown } from "@rsva/editor/markdown";
 import { can, refusal } from "@rsva/policy";
 import { uuidv7 } from "@rsva/protocol";
 import { RUN_STAGES, startedStage, type RunOutcome, type RunStage } from "@rsva/schema/models";
@@ -20,13 +26,14 @@ import { inTrash, issueByKey, writeTx, type IssueParams } from "./api-tx.ts";
 import type { Access } from "./auth/access.ts";
 import { RateLimited } from "./auth/limits.ts";
 import { db, schema, type Tx } from "./db.ts";
+import { doneWhen, proofOf, type Proof } from "./done-when.ts";
 import { HttpError } from "./http.ts";
-import { ERROR_MAX, NOTE_MAX, attemptsOf, fingerprint, leaseSeconds, LEASE_MAX, LEASE_MIN, stopComment, stopReason } from "./runs.ts";
+import { ERROR_MAX, NOTE_MAX, attemptsOf, evidenceComment, fingerprint, leaseSeconds, LEASE_MAX, LEASE_MIN, stopComment, stopReason } from "./runs.ts";
 import { takeWrite, writeRetryAfter } from "./sync/limits.ts";
 import { retrying, uniqueViolation } from "./sync/retry.ts";
 import { TxError } from "./sync/tx-error.ts";
 
-const { run, user, issue, workspace, syncAction } = schema;
+const { run, user, issue, workspace, syncAction, document } = schema;
 
 type Row = typeof run.$inferSelect;
 type Found = Awaited<ReturnType<typeof issueByKey>>;
@@ -46,6 +53,7 @@ function runView(r: Row, key: string, email: string | undefined) {
     note: r.note,
     error: r.error,
     errorFingerprint: r.errorFingerprint,
+    evidence: r.evidence,
     createdAt: r.createdAt,
     endedAt: r.endedAt,
   };
@@ -115,6 +123,29 @@ async function endRun(tx: Tx, r: Row, outcome: RunOutcome, fields: Partial<Row> 
   return { row: stopped!, stop: { run: stopped!, reason, tried: attempts.map((a) => ({ outcome: a.outcome!, note: a.note, error: a.error })) } };
 }
 
+/** The issue's "Done when" criteria now, from its description as the API gives it. */
+async function criteriaOf(issueId: string): Promise<string[]> {
+  const [doc] = await db.select({ doc: document.doc }).from(document).where(eq(document.id, issueId));
+  return doc?.doc ? doneWhen(toMarkdown(doc.doc as DocNode)) : [];
+}
+
+type Op = Parameters<typeof writeTx>[2][number];
+
+/**
+ * Ops through the write pipeline as the caller, after the run's own transaction: the log's number, or the pipeline's
+ * refusal (the caller's token may not comment, the state is for people only), which leaves the run as it ended.
+ */
+async function writeAfter(req: FastifyRequest, w: Access, ops: Op[]): Promise<{ s: number } | { refused: string }> {
+  try {
+    return { s: (await writeTx(req, w, ops)).s };
+  } catch (e) {
+    if (!(e instanceof TxError || e instanceof HttpError || e instanceof RateLimited)) throw e;
+    return { refused: e.message };
+  }
+}
+
+const commentOp = (issueId: string, body: string): Op => ({ op: "create", m: "Comment", id: uuidv7(), set: { issueId, body } });
+
 /** What a stop did on the issue, for the answer: the state it moved to (null: none to move to), and whether it was written. */
 interface StopView {
   reason: string;
@@ -137,18 +168,11 @@ async function writeStop(req: FastifyRequest, found: Found, stop: Stop): Promise
   const review = states.find((s) => startedStage(states, s.id) === "review");
   const [now] = await db.select({ stateId: issue.stateId }).from(issue).where(eq(issue.id, found.issue.id));
   const body = stopComment(stop.run.stage, stop.reason, stop.tried, !!review);
-  const ops = [
-    ...(review && now?.stateId !== review.id ? [{ op: "update" as const, m: "Issue" as const, id: found.issue.id, set: { stateId: review.id } }] : []),
-    { op: "create" as const, m: "Comment" as const, id: uuidv7(), set: { issueId: found.issue.id, body } },
-  ];
+  const ops: Op[] = [...(review && now?.stateId !== review.id ? [{ op: "update" as const, m: "Issue" as const, id: found.issue.id, set: { stateId: review.id } }] : []), commentOp(found.issue.id, body)];
   const out: StopView = { reason: stop.reason, movedTo: review?.name ?? null, written: true };
-  try {
-    const r = await writeTx(req, w, ops);
-    await db.update(run).set({ stopSyncId: r.s }).where(eq(run.id, stop.run.id));
-  } catch (e) {
-    if (!(e instanceof TxError || e instanceof HttpError || e instanceof RateLimited)) throw e;
-    return { ...out, written: false, refused: e.message };
-  }
+  const r = await writeAfter(req, w, ops);
+  if ("refused" in r) return { ...out, written: false, refused: r.refused };
+  await db.update(run).set({ stopSyncId: r.s }).where(eq(run.id, stop.run.id));
   return out;
 }
 
@@ -222,11 +246,15 @@ async function claim(req: Req): Promise<{ status: number; body: unknown }> {
   return { status: 201, body: { run: await view(got.row, found), ...extra } };
 }
 
-type Ending = { kind: "renew"; lease: number } | { kind: "done"; note: string | null } | { kind: "failed"; note: string | null; error: string };
+type Ending = { kind: "renew"; lease: number } | { kind: "done"; note: string | null; evidence: unknown } | { kind: "failed"; note: string | null; error: string };
+
+/** The stages whose completion needs evidence for the issue's criteria: triage decides what the work is, it proves nothing. */
+const PROVING: readonly RunStage[] = ["work", "verify"];
 
 /**
  * Renew, complete or fail: the caller's own live run of the issue. Someone else's is a 403; none, or a lease that has
- * passed (closed as expired here, which may stop the loop), a 409.
+ * passed (closed as expired here, which may stop the loop), a 409; a completion without the evidence its stage needs, a
+ * 400 that leaves the run live.
  */
 async function endOwn(req: Req, ending: (b: Record<string, unknown>) => Ending) {
   const found = await issueByKey(req);
@@ -234,6 +262,8 @@ async function endOwn(req: Req, ending: (b: Record<string, unknown>) => Ending) 
   mayRun(req, found.w, b);
   const what = ending(b);
   const me = req.actor!.userId;
+  const criteria = what.kind === "done" ? await criteriaOf(found.issue.id) : [];
+  let proof: Proof[] = [];
   const got = await retrying(() =>
     db.transaction(async (tx) => {
       const live = await liveRow(tx, found.issue.id);
@@ -241,18 +271,26 @@ async function endOwn(req: Req, ending: (b: Record<string, unknown>) => Ending) 
       if (live.agentId !== me) return { other: live };
       if (!leaseHolds(live)) return { expired: await endRun(tx, live, "expired") };
       if (what.kind === "renew") return { row: (await tx.update(run).set({ leaseUntil: until(what.lease) }).where(eq(run.id, live.id)).returning())[0]!, stop: null };
-      if (what.kind === "done") return endRun(tx, live, "done", { note: what.note });
+      if (what.kind === "done") {
+        const checked = PROVING.includes(live.stage) ? proofOf(criteria, what.evidence) : { proof: [] };
+        if ("refused" in checked) return { refused: checked.refused };
+        proof = checked.proof;
+        return endRun(tx, live, "done", { note: what.note, evidence: proof.length ? proof : null });
+      }
       return endRun(tx, live, "failed", { note: what.note, error: what.error, errorFingerprint: fingerprint(what.error) });
     }),
   );
   if ("none" in got) throw new HttpError(409, "conflict", `no live run on ${found.issue.key}; claim it first`);
+  if ("refused" in got) throw new HttpError(400, "invalid", `${found.issue.key}: ${got.refused}; \`rsva run criteria ${found.issue.key}\` lists them`);
   if ("other" in got) throw new HttpError(403, "forbidden", `the run on ${found.issue.key} is held by ${(await emailOf(got.other.agentId)) ?? "someone else"}`);
   if ("expired" in got) {
     if (got.expired.stop) await writeStop(req, found, got.expired.stop);
     throw new HttpError(409, "conflict", `the lease on ${found.issue.key} ended at ${got.expired.row.leaseUntil}: the run expired; claim it again`);
   }
   const stop = got.stop ? await writeStop(req, found, got.stop) : undefined;
-  return { run: await view(got.row, found), ...(stop ? { stop } : {}) };
+  const proved = proof.length ? await writeAfter(req, found.w, [commentOp(found.issue.id, evidenceComment(got.row.stage, proof, got.row.note))]) : undefined;
+  const comment = proved && ("refused" in proved ? { written: false, refused: proved.refused } : { written: true });
+  return { run: await view(got.row, found), ...(stop ? { stop } : {}), ...(comment ? { comment } : {}) };
 }
 
 export function runRoutes(app: FastifyInstance): void {
@@ -265,7 +303,7 @@ export function runRoutes(app: FastifyInstance): void {
   });
 
   app.post<{ Params: IssueParams; Body: Record<string, unknown> | null }>(`${path}/renew`, (req) => endOwn(req, (b) => ({ kind: "renew", lease: leaseOf(b) })));
-  app.post<{ Params: IssueParams; Body: Record<string, unknown> | null }>(`${path}/complete`, (req) => endOwn(req, (b) => ({ kind: "done", note: textOf(b, "note", NOTE_MAX) })));
+  app.post<{ Params: IssueParams; Body: Record<string, unknown> | null }>(`${path}/complete`, (req) => endOwn(req, (b) => ({ kind: "done", note: textOf(b, "note", NOTE_MAX), evidence: b.evidence })));
   app.post<{ Params: IssueParams; Body: Record<string, unknown> | null }>(`${path}/fail`, (req) =>
     endOwn(req, (b) => {
       const error = textOf(b, "error", ERROR_MAX);
@@ -274,10 +312,13 @@ export function runRoutes(app: FastifyInstance): void {
     }),
   );
 
-  // The issue's runs, newest first.
+  // The issue's runs, newest first, and its "Done when" criteria now: what a completion of work or verify must prove.
   app.get<{ Params: IssueParams }>(path, async (req) => {
     const found = await issueByKey(req);
-    const rows = await db.select({ r: run, email: user.email }).from(run).innerJoin(user, eq(user.id, run.agentId)).where(eq(run.issueId, found.issue.id)).orderBy(desc(run.createdAt), desc(run.id));
-    return { runs: rows.map(({ r, email }) => runView(r, found.issue.key, email)) };
+    const [rows, criteria] = await Promise.all([
+      db.select({ r: run, email: user.email }).from(run).innerJoin(user, eq(user.id, run.agentId)).where(eq(run.issueId, found.issue.id)).orderBy(desc(run.createdAt), desc(run.id)),
+      criteriaOf(found.issue.id),
+    ]);
+    return { runs: rows.map(({ r, email }) => runView(r, found.issue.key, email)), criteria };
   });
 }
