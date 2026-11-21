@@ -643,6 +643,7 @@ test("runs: claim, renew, complete and fail send their bodies; a stop is said; t
     [["run", "renew", "CORE-1", "--lease", "45"], `${path}/renew`, { lease: 45 }],
     [["run", "complete", "CORE-1", "--note", "PR #3"], `${path}/complete`, { note: "PR #3" }],
     [["run", "fail", "CORE-1", "--error", "-", "--note", "n"], `${path}/fail`, { error: "boom", note: "n" }],
+    [["run", "fail", "CORE-1", "--error", "push denied", "--env"], `${path}/fail`, { error: "push denied", env: true }],
     [["run", "complete", "CORE-1", "--evidence", "CI green", "--evidence", "-", "--note", "PR #3"], `${path}/complete`, { evidence: ["CI green", "boom"], note: "PR #3" }],
   ];
   for (const [argv, url, body] of cases) {
@@ -657,8 +658,11 @@ test("runs: claim, renew, complete and fail send their bodies; a stop is said; t
   answers = [{ body: { run: row({ outcome: "stopped", attempt: 3, live: false, endedAt: "2026-11-21T09:00:00.000Z" }), stop: { reason: "3 failed attempts", movedTo: "In Review", written: true } } }];
   assert.equal((await cli(["run", "fail", "CORE-1", "--error", "x"])).out, "failed CORE-1 work attempt 3: stopped at 2026-11-21T09:00:00.000Z\nstopped the work loop: 3 failed attempts; moved to In Review");
 
-  answers = [{ body: { runs: [row(), row({ attempt: 1, outcome: "failed", live: false, error: "tests failed\nat x", endedAt: "2026-11-21T08:00:00.000Z" }), row({ live: false })], criteria: [] } }];
-  assert.equal((await cli(["runs", "CORE-1"])).out, "#1  work  live     bot@x.dev  2026-11-21 10:00\n#1  work  failed   bot@x.dev  2026-11-21 08:00  tests failed\n#1  work  expired  bot@x.dev  2026-11-21 10:00");
+  answers = [{ body: { run: row({ outcome: "blocked", live: false, endedAt: "2026-11-21T09:00:00.000Z" }) } }];
+  assert.equal((await cli(["run", "fail", "CORE-1", "--error", "push denied", "--env"])).out, "blocked CORE-1 work attempt 1: blocked at 2026-11-21T09:00:00.000Z");
+
+  answers = [{ body: { runs: [row(), row({ attempt: 1, outcome: "failed", live: false, error: "tests failed\nat x", endedAt: "2026-11-21T08:00:00.000Z" }), row({ live: false }), row({ outcome: "blocked", live: false, error: "push denied", endedAt: "2026-11-21T07:00:00.000Z" })], criteria: [] } }];
+  assert.equal((await cli(["runs", "CORE-1"])).out, "#1  work  live     bot@x.dev  2026-11-21 10:00\n#1  work  failed   bot@x.dev  2026-11-21 08:00  tests failed\n#1  work  expired  bot@x.dev  2026-11-21 10:00\n#1  work  blocked  bot@x.dev  2026-11-21 07:00  push denied");
   assert.equal(seen.at(-1)!.url, path);
 
   // Done when: the criteria numbered, the evidence under the run that gave it, the comment said.
@@ -675,6 +679,11 @@ test("runs: claim, renew, complete and fail send their bodies; a stop is said; t
   assert.match((await cli(["runs", "CORE-1"])).out, /\nthe newest 1; older runs are not listed$/);
   answers = [{ body: { run: row({ outcome: "done", live: false, evidence: proof, endedAt: "2026-11-21T09:00:00.000Z" }), comment: { written: true } } }];
   assert.equal((await cli(["run", "complete", "CORE-1", "--evidence", "a", "--evidence", "b"])).out, "completed CORE-1 work attempt 1: done at 2026-11-21T09:00:00.000Z\ncommented the evidence for 2 criteria");
+  // Done work: where the issue went, or why it stayed (RSVA-638).
+  answers = [{ body: { run: row({ outcome: "done", live: false, endedAt: "2026-11-21T09:00:00.000Z" }), review: { movedTo: "In Review", moved: true } } }];
+  assert.equal((await cli(["run", "complete", "CORE-1"])).out, "completed CORE-1 work attempt 1: done at 2026-11-21T09:00:00.000Z\nCORE-1 now in In Review");
+  answers = [{ body: { run: row({ outcome: "done", live: false, endedAt: "2026-11-21T09:00:00.000Z" }), review: { movedTo: "In Review", moved: false, refused: "people set this state" } } }];
+  assert.match((await cli(["run", "complete", "CORE-1"])).out, /\nCORE-1 stays where it was: the move to In Review was refused: people set this state$/);
 
   seen.length = 0;
   for (const argv of [["run", "fail", "CORE-1"], ["run", "claim", "CORE-1", "--lease", "1d"], ["run", "renew", "CORE-1", "--lease", "0"], ["run", "complete", "CORE-1", "--evidence", "-", "--evidence", "-"]])
@@ -991,6 +1000,7 @@ probe() { words=("$@"); CURRENT=$#; PREFIX=$words[CURRENT]; IPREFIX=; _rsva; pri
     [["issues", "is:"], "is:|blocked blocking duplicate ready"],
     [["run", ""], "describe|claim renew complete fail criteria"],
     [["run", "claim", "CORE-1", "--stage", ""], "|triage work verify"],
+    [["run", "fail", "CORE-1", "--"], "|--error --note --env --help -h --plain --color --json"],
     [["my", "-group:completed,c"], "-group:completed,|backlog unstarted started completed cancelled"],
     [["issues", "-la"], `-|${keys}`],
     [["issues", "-p", "PLNR", "st"], `|${keys}`],

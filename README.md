@@ -105,7 +105,7 @@ with its own recursiva token and a GitHub token of its own, never yours. Require
 - **HTTP API**, `/api/v1/workspaces/:ws/...`: issues, comments, cycles, relations, links, labels, states, projects, tokens,
   and agent runs (`POST …/issues/:key/runs` claims an issue with a lease; `…/runs/renew`, `/complete`, `/fail`; `GET`
   lists the newest 50 with the issue's criteria; a lapsed lease stays the holder's until another agent claims; three failed
-  attempts in a day or the same error twice stop the loop and send the issue to review; on an issue whose description has a "Done when" list, `/complete` of work or verify needs `evidence`, one text per criterion). Reference: https://rsva.dev/docs/agents/api (the whole manual as one file: https://rsva.dev/docs/llms-full.txt).
+  attempts in a day or the same error twice stop the loop and send the issue to review; `/fail` with `env: true` is the environment's failure, not counted as an attempt, three of those stop it too; on an issue whose description has a "Done when" list, `/complete` of work or verify needs `evidence`, one text per criterion; `/complete` of work moves an open issue to review). Reference: https://rsva.dev/docs/agents/api (the whole manual as one file: https://rsva.dev/docs/llms-full.txt).
 
 There is no MCP server and no SDK yet.
 

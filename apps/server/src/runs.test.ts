@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attemptsOf, fingerprint, leaseSeconds, LEASE_MAX, stopComment, stopReason, type RunFacts } from "./runs.ts";
+import type { DocNode } from "@rsva/editor/doc";
+import { fromMarkdown } from "@rsva/editor/markdown";
+import { attemptsOf, doneComment, doneCommentMax, fingerprint, leaseSeconds, LEASE_MAX, stopComment, stopReason, type RunFacts } from "./runs.ts";
 
 const NOW = Date.parse("2026-11-21T12:00:00Z");
 const at = (hoursAgo = 1) => new Date(NOW - hoursAgo * 3600_000).toISOString();
 const failed = (errorFingerprint: string | null = null, createdAt = at()): RunFacts => ({ outcome: "failed", errorFingerprint, createdAt });
 const expired: RunFacts = { outcome: "expired", errorFingerprint: null, createdAt: at() };
 const done: RunFacts = { outcome: "done", errorFingerprint: null, createdAt: at() };
+const blocked = (errorFingerprint: string | null = "env"): RunFacts => ({ outcome: "blocked", errorFingerprint, createdAt: at() });
 
 test("attempts count from the last stopped run, over the last day; a done run does not end the count", () => {
   assert.equal(attemptsOf([failed(), failed()], NOW).length, 2);
@@ -53,7 +56,7 @@ test("the stop comment lists each attempt and keeps Markdown out of what agents 
     { outcome: "expired", note: null, error: null },
   ], { moved: true });
   assert.match(text, /^Stopped the work loop: 3 failed attempts\./);
-  assert.match(text, /1\. failed — tried \\\*bold\\\* — error: boom \\\[x\\\]\\\(mention\\:me\\\)\n2\. expired\n/);
+  assert.match(text, /1\. failed — tried \\\*bold\\\* — error: boom \\\[x\\\]\(mention:me\)\n2\. expired\n/);
   assert.match(text, /until a person moves the issue out of review/);
 });
 
@@ -70,4 +73,56 @@ test("a refused move to review is said in the stop comment, with the refusal as 
   const text = stopComment("work", "3 failed attempts", [], { moved: false, refused: "only people move issues to *Review*" });
   assert.match(text, /The move to review was refused \(only people move issues to \\\*Review\\\*\), so the issue stays where it is; agents cannot claim the work stage again until a person changes its state\./);
   assert.match(stopComment("work", "x", [], { moved: false }), /The project has no review state/);
+});
+
+/** The inline nodes of a block, flattened: what a comment shows of it. */
+const inlineOf = (n: DocNode): DocNode[] => (n.type === "text" || n.type === "mention" ? [n] : (n.content ?? []).flatMap(inlineOf));
+
+test("evidence keeps inline code and bare URLs; agent text cannot change the comment's structure", () => {
+  const hostile = ["# heading", "- item", "> quote", "```js", "1. two", "line\nbreak", "[@Ann](mention:0192a1b2-0000-7000-8000-000000000001)", "<img src=x onerror=y>", "| a | b |", "---", "@ann", "*bold*"];
+  const md = doneComment(
+    "work",
+    [{ criterion: "`pnpm check` passes", evidence: "green in apps/server/src/runs.test.ts, ``a`b`` c" }, ...hostile.map((h) => ({ criterion: h, evidence: h }))],
+    "PR https://github.com/r3cursiva/recursiva/pull/21.",
+  )!;
+  const doc = fromMarkdown(md);
+  assert.deepEqual(doc.content!.map((b) => b.type), ["paragraph", "ordered_list", "paragraph"], md);
+  const items = doc.content![1]!.content!;
+  assert.equal(items.length, hostile.length + 1);
+  for (const item of items) assert.deepEqual(item.content!.map((b) => b.type), ["paragraph"], "each item one paragraph: no heading, list, quote or fence inside");
+  const all = inlineOf(doc);
+  assert.ok(!all.some((n) => n.type === "mention"), "no mention");
+  assert.deepEqual(all.filter((n) => n.marks?.some((m) => m.type === "code")).map((n) => n.text), ["pnpm check", "a`b"], "code spans stay code");
+  assert.deepEqual(all.flatMap((n) => n.marks?.filter((m) => m.type === "link").map((m) => m.attrs!.href) ?? []), ["https://github.com/r3cursiva/recursiva/pull/21"], "the URL links, nothing else does");
+  assert.ok(!all.some((n) => n.marks?.some((m) => m.type === "bold" || m.type === "italic")), "no emphasis");
+  for (const h of hostile) assert.ok(all.map((n) => n.text).join("").includes(h.replace("\n", " ")), `${h} reads as it was written`);
+  assert.match(md, /^1\.\s+`pnpm check` passes — green in apps\/server\/src\/runs\.test\.ts, ``a`b`` c$/m, "harmless punctuation is not escaped");
+});
+
+test("the environment's failures do not count as the agent's, and stop the loop at a cap of their own", () => {
+  assert.equal(stopReason([failed("a"), blocked(), failed("b"), blocked()]), null, "two failures of the agent, two of the environment");
+  assert.equal(stopReason([blocked("x"), blocked("x")]), null, "the same error twice: the environment's is not the agent's repeat");
+  assert.equal(stopReason([failed("a"), blocked("a"), failed("b")]), null, "a blocked run between does not make a repeat either");
+  assert.equal(stopReason([failed("a"), blocked("a"), failed("a")]), "the same error twice in a row", "nor clear one");
+  assert.match(stopReason([blocked(), failed("a"), blocked(), blocked()])!, /^3 failures of the environment, not of the agent/);
+  // An agent that calls every failure the environment's is still stopped: at most 3 + 3 failures in a window.
+  assert.equal(stopReason([failed("a"), failed("b"), blocked(), blocked()]), null);
+  assert.ok(stopReason([failed("a"), failed("b"), blocked(), blocked(), blocked()]));
+  assert.ok(stopReason([blocked(), blocked(), failed("a"), failed("b"), failed("c")]));
+});
+
+test("code spans in agent text pair as the Markdown parser pairs them, an escaped backtick included", () => {
+  const codes = (n: DocNode) => inlineOf(n).filter((x) => x.marks?.some((m) => m.type === "code")).map((x) => x.text);
+  for (const s of ["say \\`a` and `b`", "``a`b`` c", "`a`` b` `c`", "\\``x``"]) {
+    const md = doneComment("work", [{ criterion: "c", evidence: s }], null)!;
+    assert.deepEqual(codes(fromMarkdown(md)), codes(fromMarkdown(s)), s);
+  }
+});
+
+test("a done comment's longest form bounds every refusal it can quote", () => {
+  const proof = [{ criterion: "c", evidence: "e" }];
+  for (const unit of ["*", "\\", "<a", "&a;", "https://x ", "_ ", "`", "[x](mention:me)", "a"]) {
+    const refused = unit.repeat(Math.ceil(1000 / unit.length));
+    assert.ok(doneComment("work", proof, "n", { moved: false, refused })!.length <= doneCommentMax("work", proof, "n"), unit);
+  }
 });

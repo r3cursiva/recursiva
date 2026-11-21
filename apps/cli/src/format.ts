@@ -500,7 +500,7 @@ export interface RunRow {
   endedAt: string | null;
 }
 
-const OUTCOME: Record<string, Colour> = { live: "green", done: "green", failed: "red", stopped: "red", expired: "yellow" };
+const OUTCOME: Record<string, Colour> = { live: "green", done: "green", failed: "red", stopped: "red", expired: "yellow", blocked: "yellow" };
 /** Live, or its lease passed with nobody closing it yet: what the next claim will find. */
 const runState = (r: RunRow) => r.outcome ?? (r.live ? "live" : "expired");
 

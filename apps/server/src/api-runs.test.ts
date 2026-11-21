@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { and, eq, isNull, sql as dsql } from "drizzle-orm";
 import { db, schema } from "./db.ts";
+import { doneComment } from "./runs.ts";
 import { addMember, apiFixture, asToken, fetchAs } from "./test/helpers.ts";
 
 /** A second agent of the workspace, with its own token. */
@@ -19,7 +20,14 @@ const f = apiFixture(async (ws) => {
 type Run = { id: string; issue: string; stage: string; attempt: number; agent: string; outcome: string | null; live: boolean; leaseUntil: string; note: string | null; error: string | null; evidence: { criterion: string; evidence: string }[] | null };
 type Answer = {
   status: number;
-  body: Record<string, unknown> & { run?: Run; stop?: { reason: string; movedTo: string | null; moved: boolean; written: boolean; refused?: string }; comment?: { written: boolean }; message?: string; error?: string };
+  body: Record<string, unknown> & {
+    run?: Run;
+    stop?: { reason: string; movedTo: string | null; moved: boolean; written: boolean; refused?: string };
+    comment?: { written: boolean };
+    review?: { movedTo: string; moved: boolean; refused?: string };
+    message?: string;
+    error?: string;
+  };
 };
 
 const call = async (as: typeof fetch, method: string, path: string, body?: unknown): Promise<Answer> => {
@@ -28,7 +36,7 @@ const call = async (as: typeof fetch, method: string, path: string, body?: unkno
 };
 const runs = (key: string, tail = "") => `/issues/${key}/runs${tail}`;
 const claim = (as: typeof fetch, key: string, body: Record<string, unknown> = {}) => call(as, "POST", runs(key), body);
-const fail = (as: typeof fetch, key: string, error: string, note?: string) => call(as, "POST", runs(key, "/fail"), { error, ...(note ? { note } : {}) });
+const fail = (as: typeof fetch, key: string, error: string, note?: string, env?: unknown) => call(as, "POST", runs(key, "/fail"), { error, ...(note ? { note } : {}), ...(env === undefined ? {} : { env }) });
 
 async function newIssue(title: string, more: Record<string, unknown> = {}): Promise<string> {
   const r = await call(f.agent, "POST", "/issues", { project: "CORE", title, force: true, ...more });
@@ -236,8 +244,8 @@ test("Done when: complete on work needs evidence for each criterion, in order; r
   assert.equal(comment!.author, agentEmail);
   assert.equal(
     comment!.body,
-    "Completed the work stage. Done when, with evidence:\n\n1. \\`pnpm check\\` passes — CI run 12 \\*green\\*\n2. a test fails without it — \\[\\@Ann\\]\\(mention\\:me\\) see apps\\/server\\/src\\/x\\.test\\.ts\n\nPR \\#3",
-    "each criterion with its evidence, as plain text: no mention or emphasis it could carry",
+    "Completed the work stage. Done when, with evidence:\n\n1. `pnpm check` passes — CI run 12 \\*green\\*\n2. a test fails without it — \\[@Ann\\](mention:me) see apps/server/src/x.test.ts\n\nPR #3",
+    "each criterion with its evidence and its inline code: no mention or emphasis it could carry",
   );
 });
 
@@ -300,11 +308,20 @@ test("a stop made by a person whose claim found the lapsed lease is not read as 
   assert.equal((await claim(f.agent, key)).status, 201, "a person's own change after it resets");
 });
 
-test("a refused move to review still leaves the comment of what was tried, saying the issue stays", async () => {
-  const key = await newIssue("Review is for people");
+/** Runs `then` with CORE's review state for people only: the pipeline refuses an agent's move there. */
+async function reviewForPeople(then: () => Promise<void>): Promise<void> {
   const review = await db.select({ id: schema.workflowState.id }).from(schema.workflowState).innerJoin(schema.project, eq(schema.project.id, schema.workflowState.projectId)).where(and(eq(schema.project.workspaceId, f.ws.workspaceId), eq(schema.project.key, "CORE"), eq(schema.workflowState.name, "In Review")));
   await db.update(schema.workflowState).set({ onlyPeople: true }).where(eq(schema.workflowState.id, review[0]!.id));
   try {
+    await then();
+  } finally {
+    await db.update(schema.workflowState).set({ onlyPeople: false }).where(eq(schema.workflowState.id, review[0]!.id));
+  }
+}
+
+test("a refused move to review still leaves the comment of what was tried, saying the issue stays", async () => {
+  const key = await newIssue("Review is for people");
+  await reviewForPeople(async () => {
     await claim(f.agent, key);
     await fail(f.agent, key, "same");
     await claim(f.agent, key);
@@ -314,9 +331,7 @@ test("a refused move to review still leaves the comment of what was tried, sayin
     assert.notEqual(await stateOf(key), "In Review");
     const [comment] = await stopComments(key);
     assert.match(comment!.body, /The move to review was refused \(.*\), so the issue stays where it is/);
-  } finally {
-    await db.update(schema.workflowState).set({ onlyPeople: false }).where(eq(schema.workflowState.id, review[0]!.id));
-  }
+  });
 });
 
 test("archived issues take no claim or renew", async () => {
@@ -364,4 +379,114 @@ test("volume: criteria past 50 are refused on complete and cut in the list; evid
   await db.insert(schema.run).values(Array.from({ length: 52 }, (_, i) => ({ workspaceId: f.ws.workspaceId, issueId, agentId: f.ws.agentId, stage: "triage" as const, attempt: i + 1, leaseUntil: lease, outcome: "done" as const })));
   const page = (await call(f.agent, "GET", runs(busy))).body;
   assert.deepEqual([(page.runs as Run[]).length, page.more], [50, true]);
+});
+
+test("a done work run moves the issue to review with its evidence, in one transaction; a closed issue stays closed", async () => {
+  const key = await newIssue("Finished work waits for a person", { description: "## Done when\n\n- it works" });
+  await claim(f.agent, key);
+  const done = await complete(f.agent, key, { evidence: ["it does"] });
+  assert.deepEqual([done.status, done.body.review, done.body.comment], [200, { movedTo: "In Review", moved: true }, { written: true }], JSON.stringify(done.body));
+  assert.equal(await stateOf(key), "In Review");
+  const [issueId] = (await db.select({ id: schema.issue.id }).from(schema.issue).where(and(eq(schema.issue.workspaceId, f.ws.workspaceId), eq(schema.issue.title, "Finished work waits for a person")))).map((r) => r.id);
+  const writes = await db
+    .select({ model: schema.syncAction.model, txId: schema.syncAction.txId })
+    .from(schema.syncAction)
+    .where(and(eq(schema.syncAction.workspaceId, f.ws.workspaceId), dsql`(${schema.syncAction.modelId} = ${issueId} and ${schema.syncAction.data} ? 'stateId') or (${schema.syncAction.model} = 'Comment' and ${schema.syncAction.data}->>'issueId' = ${issueId})`))
+    .orderBy(schema.syncAction.id);
+  assert.deepEqual(writes.map((w) => w.model).sort(), ["Comment", "Issue", "Issue"], "created, moved, commented");
+  assert.equal(new Set(writes.slice(-2).map((w) => w.txId)).size, 1, "the move and the comment are one transaction");
+
+  const triaged = await newIssue("Triage moves nothing");
+  await claim(f.agent, triaged, { stage: "triage" });
+  assert.deepEqual([(await complete(f.agent, triaged)).body.review, await stateOf(triaged)], [undefined, "Backlog"]);
+
+  const closed = await newIssue("Done already");
+  await claim(f.agent, closed);
+  assert.equal((await call(f.owner, "PATCH", `/issues/${closed}`, { state: "Done" })).status, 200);
+  assert.deepEqual([(await complete(f.agent, closed)).body.review, await stateOf(closed)], [undefined, "Done"]);
+});
+
+test("a done work run in a project without a review state leaves the issue where it was", async () => {
+  assert.equal((await call(f.owner, "POST", "/projects", { key: "FLAT", name: "Flat" })).status, 201);
+  const key = await newIssue("No review here", { project: "FLAT", state: "In Progress" });
+  await claim(f.agent, key);
+  const done = await complete(f.agent, key, { note: "PR #4" });
+  assert.deepEqual([done.status, done.body.review], [200, undefined], JSON.stringify(done.body));
+  assert.equal(await stateOf(key), "In Progress");
+});
+
+test("a done work run whose move to review is refused still leaves the evidence, saying the issue stays", async () => {
+  const key = await newIssue("Finished, review for people", { description: "## Done when\n\n- it works", state: "In Progress" });
+  await reviewForPeople(async () => {
+    await claim(f.agent, key);
+    const done = await complete(f.agent, key, { evidence: ["it does"] });
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.deepEqual([done.body.review?.moved, done.body.comment], [false, { written: true }], JSON.stringify(done.body));
+    assert.match(done.body.review!.refused!, /people set this state/);
+    assert.equal(await stateOf(key), "In Progress");
+    const [comment, ...more] = await commentsStarting(key, "Completed the");
+    assert.equal(more.length, 0);
+    assert.match(comment!.body, /^1\. it works — it does\n\nThe move to review was refused \(.*people set this state.*\), so the issue stays where it is\.$/m);
+  });
+});
+
+test("a failure of the environment is recorded as blocked, takes no agent attempt, and three of them stop the loop", async () => {
+  const key = await newIssue("Push denied");
+  await failTwice(key);
+  for (const i of [1, 2]) {
+    await claim(f.agent, key);
+    if (i === 1) assert.equal((await fail(f.agent, key, "x", undefined, "yes")).status, 400, "env is a boolean");
+    const r = await fail(f.agent, key, "git push denied (403)", undefined, true);
+    assert.deepEqual([r.status, r.body.run!.outcome, r.body.stop], [200, "blocked", undefined], `blocked ${i}: neither the third attempt nor the same error twice`);
+  }
+  await claim(f.agent, key);
+  const third = await fail(f.agent, key, "git push denied (403)", "no write access", true);
+  assert.match(third.body.stop!.reason, /^3 failures of the environment, not of the agent/);
+  assert.equal(await stateOf(key), "In Review");
+  const [comment] = await stopComments(key);
+  assert.match(comment!.body, /^Stopped the work loop: 3 failures of the environment, not of the agent/);
+  assert.match(comment!.body, /\n3\. blocked — error: git push denied \(403\)\n/);
+  assert.deepEqual(((await call(f.owner, "GET", runs(key))).body.runs as Run[]).map((r) => r.outcome), ["stopped", "blocked", "blocked", "failed", "failed"]);
+});
+
+test("a done work run without criteria whose move to review is refused still says why on the issue", async () => {
+  const key = await newIssue("Nothing to prove, review for people", { state: "In Progress" });
+  await reviewForPeople(async () => {
+    await claim(f.agent, key);
+    const done = await complete(f.agent, key, { note: "PR #7" });
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.deepEqual([done.body.review?.moved, done.body.comment], [false, { written: true }], JSON.stringify(done.body));
+    assert.equal(await stateOf(key), "In Progress");
+    const [comment, ...more] = await commentsStarting(key, "Completed the");
+    assert.equal(more.length, 0);
+    assert.match(comment!.body, /^Completed the work stage\.\n\nPR #7\n\nThe move to review was refused \(.*people set this state.*\), so the issue stays where it is\.$/);
+  });
+});
+
+test("a done work run leaves an issue past review where it is: an agent does not take an approval back", async () => {
+  const key = await newIssue("Approved already");
+  assert.equal((await call(f.owner, "PATCH", `/issues/${key}`, { state: "Approved" })).status, 200);
+  await claim(f.agent, key);
+  const done = await complete(f.agent, key);
+  assert.deepEqual([done.status, done.body.review, done.body.comment], [200, undefined, undefined], JSON.stringify(done.body));
+  assert.equal(await stateOf(key), "Approved");
+  assert.equal((await commentsStarting(key, "Completed the")).length, 0, "nothing was attempted, so nothing is said");
+});
+
+test("evidence that fits only without a refused move's paragraph is refused before the run ends", async () => {
+  const criteria = Array.from({ length: 33 }, (_, i) => `c${i}`);
+  const key = await newIssue("Evidence at the edge", { description: `## Done when\n\n${criteria.map((c) => `- ${c}`).join("\n")}` });
+  const evidence = (last: number) => criteria.map((_, i) => "x".repeat(i < 32 ? 2000 : last));
+  const sized = (last: number) => doneComment("work", criteria.map((criterion, i) => ({ criterion, evidence: evidence(last)[i]! })), null)!.length;
+  // The longest last evidence whose comment fits as written when the move succeeds.
+  const fits = 65536 - (sized(1) - 1);
+  assert.ok(fits > 1000 && fits <= 2000, String(fits));
+  assert.equal(sized(fits), 65536);
+  await claim(f.agent, key);
+  const over = await complete(f.agent, key, { evidence: evidence(fits) });
+  assert.equal(over.status, 400, "the comment of a refused move would be over the limit");
+  assert.match(over.body.message!, /over 65536; shorten it/);
+  const room = await complete(f.agent, key, { evidence: evidence(fits - 1000) });
+  assert.equal(room.status, 200, JSON.stringify(room.body).slice(0, 200));
+  assert.deepEqual(room.body.comment, { written: true });
 });
