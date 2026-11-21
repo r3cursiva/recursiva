@@ -8,7 +8,7 @@ import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
 import { errorText } from "@rsva/schema/util";
 import { UsageError, type Client } from "@rsva/terminal/client";
-import { runWord, sessionCalls, settle, tend } from "./agent-run.ts";
+import { runWord, sessionCalls, sessionsSeen, tend, tendedText } from "./agent-run.ts";
 import { agentOf, agentStates, dispatch, EFFORTS, loadConfig, MODELS, planOf, rexSessions, Runs, withProjects, type Effort, type Exec, type Model, type Step, type Tracker } from "./dispatch.ts";
 
 
@@ -82,29 +82,36 @@ export async function dispatchCommand(api: Client, argv: string[], out: (s: stri
 /**
  * The runs and their state, each with its server run: stage, attempt and how it stands. Listing tends them as the
  * screen does: a live session's run is renewed, a closed one's still live is failed. Then a closed session's settings
- * file, which holds the agent's tokens, goes.
+ * file, which holds the agent's tokens, goes, unless its run could not be told (it is tried again next time). A session
+ * Rex does not list is asked about once more before it counts as closed.
  */
 export async function agentsCommand(out: (s: string) => void): Promise<void> {
-  const store = new Runs();
-  const runs = await store.all();
+  const runs = await new Runs().all();
   if (!runs.length) return out("no agents started from this Mac");
-  const [live, states, config] = await Promise.all([rexSessions(exec), agentStates(exec), loadConfig()]);
+  const [live, states, config] = await Promise.all([
+    sessionsSeen(() => rexSessions(exec), runs.map((r) => r.rexSession), () => new Promise((r) => setTimeout(r, 1000))),
+    agentStates(exec),
+    loadConfig(),
+  ]);
   for (const r of runs) {
     const alive = live.has(r.rexSession);
     const state = alive ? (states.get(r.sessionId) ?? "starting") : "closed";
     const settings = join(config.runs, `${r.sessionId}.json`);
     let run = "";
+    let told = true;
     const calls = r.claim && (await sessionCalls(settings));
     if (r.claim && calls) {
       const t = await tend(r.key, r.claim, alive, calls).catch((e: unknown) => errorText(e).split("\n")[0]!);
-      if (typeof t === "string") run = `${r.claim.stage} #${r.claim.attempt} ? (${t})`;
-      else {
-        const said = await settle(store, r, t);
+      if (typeof t === "string") {
+        told = false;
+        run = `${r.claim.stage} #${r.claim.attempt} ? (${t})`;
+      } else {
+        const said = tendedText(r.key, t);
         if (said) out(said);
         run = t.run && (t.did !== "ended" || t.run.id === r.claim.id) ? `${t.run.stage} #${t.run.attempt} ${runWord(t.run)}` : `${r.claim.stage} #${r.claim.attempt} ended`;
       }
     } else if (r.claim) run = `${r.claim.stage} #${r.claim.attempt}`;
-    if (state === "closed") await rm(settings, { force: true });
+    if (state === "closed" && told) await rm(settings, { force: true });
     out(`${r.key}  ${state}${run ? `  ${run}` : ""}  ${r.model} ${r.effort}${r.executor ? ` + ${r.executor}` : ""}  since ${r.startedAt.slice(0, 16).replace("T", " ")}  ${r.session}`);
   }
 }

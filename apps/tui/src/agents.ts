@@ -4,7 +4,7 @@
 import { join } from "node:path";
 import type { SyncEngine } from "@rsva/sync";
 import { errorText } from "@rsva/schema/util";
-import { sessionCalls, settle, Tending } from "./agent-run.ts";
+import { sessionCalls, Tending, tendedText } from "./agent-run.ts";
 import { exec } from "./commands.ts";
 import { agentStates, cleanUp, rexSessions, Runs, type Config } from "./dispatch.ts";
 import type { Seg } from "./widgets.ts";
@@ -47,9 +47,9 @@ export function watchAgents(host: AgentsHost): () => void {
       // A call that failed is tried again later (Tending); what a look did is said when there is something to say.
       void tending
         .look(r.key, r.claim, r.startedAt, live.has(r.rexSession), () => sessionCalls(settings))
-        .then(async (t) => {
-          const said = t && (await settle(runs, r, t));
-          if (said) host.say([[said, { fg: t.did === "reclaimed" ? "ink-2" : "error" }]]);
+        .then((t) => {
+          const said = t && tendedText(r.key, t);
+          if (said) host.say([[said, { fg: "error" }]]);
         })
         .catch(() => undefined);
     }

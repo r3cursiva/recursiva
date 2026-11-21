@@ -549,20 +549,27 @@ export async function dispatch(
     if (existsSync(p.worktree)) throw new Error(`${where} exists: the issue was dispatched before`);
     return originHead(exec, p.repo);
   });
-  // The token the agent's session will use, and its server and workspace: the claim is the agent's, as its runs are.
+  // The agent's two tokens first, so a missing one is a setup mistake, not an attempt; then the claim, with the planner
+  // token, server and workspace its session will use: the claim is the agent's, as its runs are. Never the owner's
+  // GitHub token: it can push anywhere and change workflows.
   const agentEnv = await step(names.claim, async () => {
-    const env = { ...pick(process.env, ["RSVA_URL", "RSVA_WS"]), RSVA_TOKEN: await tokenFrom(secret, [rsvaKeychain()], "the agents' token") };
+    const url = (await exec("git", ["-C", p.repo, "remote", "get-url", "origin"])).trim();
+    const [rsva, github] = await Promise.all([
+      tokenFrom(secret, [rsvaKeychain()], "the agents' token"),
+      tokenFrom(secret, githubKeychain(url), "a fine-grained GitHub token for the repository's owner, Contents and Pull requests: write"),
+    ]);
+    const env = { ...pick(process.env, ["RSVA_URL", "RSVA_WS"]), RSVA_TOKEN: rsva };
     const calls = callsOf(env);
     const run = await calls.claim(p.key, "work");
     undo.push({ text: `${p.key} work run failed`, run: () => calls.fail(p.key, `the dispatch failed before the agent started: ${failure}`) });
-    return { env, claim: { id: run.id, stage: run.stage, attempt: run.attempt } };
+    return { env, url, github, claim: { id: run.id, stage: run.stage, attempt: run.attempt } };
   });
-  const origin = await step(names.worktree, async () => {
+  const { url } = agentEnv;
+  await step(names.worktree, async () => {
     // The agent's own clone, not a worktree: a worktree's commits go into the repository's shared .git, which the agent
     // could then rewrite (refs, objects, links in .git/worktrees that git worktree prune follows) under the owner's feet.
     // Cloned from the owner's copy without hard links (--no-local), so every object is hashed again on the way, then
     // brought to GitHub's commit; hooks off throughout, no program of the checkout runs out here.
-    const url = (await exec("git", ["-C", p.repo, "remote", "get-url", "origin"])).trim();
     const git = (args: string[]) => exec("git", ["-c", "core.hooksPath=/dev/null", ...args]);
     await git(["clone", "--quiet", "--no-local", "--no-checkout", "--no-tags", "--single-branch", "--branch", head.name, p.repo, p.worktree]).catch(() =>
       git(["clone", "--quiet", "--no-checkout", "--no-tags", "--single-branch", "--branch", head.name, url, p.worktree]),
@@ -582,7 +589,6 @@ export async function dispatch(
       await git(["-c", "core.excludesFile=/dev/null", "-C", p.worktree, "check-ignore", "-q", "docs"]).catch(() => Promise.reject(new Error("docs/ is not ignored in the clone (.gitignore): not copied, so it cannot be committed")));
       await cp(join(p.repo, "docs"), join(p.worktree, "docs"), { recursive: true, filter: async (from) => !from.endsWith("/.git") && !(await lstat(from)).isSymbolicLink() });
     }
-    return url;
   });
   if (names.install)
     await step(names.install, async () => {
@@ -597,9 +603,7 @@ export async function dispatch(
       });
     });
   const rexSession = await step(names.rex, async () => {
-    // The agent's two tokens into its session's own settings: the planner's, read for the claim, and its GitHub token.
-    // Never the owner's GitHub token: it can push anywhere and change workflows.
-    const github = await tokenFrom(secret, githubKeychain(origin), "a fine-grained GitHub token for the repository's owner, Contents and Pull requests: write");
+    // The agent's two tokens, read before the claim, into its session's own settings.
     const profile = JSON.parse(await readFile(PROFILE, "utf8")) as Profile;
     // git's global config is not read (/dev/null): the owner's name and address come in as the commit identity.
     const who = async (key: string) => (await exec("git", ["config", "--global", key]).catch(() => "")).trim();
@@ -618,7 +622,7 @@ export async function dispatch(
       ...profile,
       // The server and the workspace too, when set: the agent's token is that server's (RSVA-547), and without the
       // workspace every rsva call there asks the server for the token's own first.
-      env: { ...env, ...identity, ...agentEnv.env, GH_TOKEN: github },
+      env: { ...env, ...identity, ...agentEnv.env, GH_TOKEN: agentEnv.github },
     };
     await mkdir(dirname(p.settings), { recursive: true, mode: 0o700 });
     await writeFile(p.settings, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });

@@ -147,8 +147,10 @@ test("a dispatch: GitHub's main, the agent's own clone at that commit, Rex sessi
     w.calls,
     [
       `git -C ${w.repo} ls-remote --symref origin HEAD`,
-      "keychain rsva-bot",
       `git -C ${w.repo} remote get-url origin`,
+      "keychain rsva-bot",
+      "keychain rsva-agents-github-r3cursiva",
+      "keychain rsva-agents-github",
       `${off} clone --quiet --no-local --no-checkout --no-tags --single-branch --branch main ${w.repo} ${p.worktree}`,
       `${off} -C ${p.worktree} remote set-url origin https://github.com/r3cursiva/recursiva.git`,
       `${off} -C ${p.worktree} fetch --quiet --no-tags origin main`,
@@ -156,8 +158,6 @@ test("a dispatch: GitHub's main, the agent's own clone at that commit, Rex sessi
       `${off} -C ${p.worktree} checkout --quiet -b ${p.branch} ${MAIN_SHA}`,
       `${off} -C ${p.worktree} config branch.${p.branch}.remote origin`,
       `${off} -C ${p.worktree} config branch.${p.branch}.merge refs/heads/${p.branch}`,
-      "keychain rsva-agents-github-r3cursiva",
-      "keychain rsva-agents-github",
       "git config --global user.name",
       "git config --global user.email",
       `git -C ${w.repo} config --get core.hooksPath`,
@@ -202,7 +202,8 @@ test("the GitHub token of the repository's owner comes first, the shared one aft
   none.keychain.delete("rsva-agents-github");
   const q = planOf(issue, choice, none.config);
   await assert.rejects(dispatch(q, issue, none.deps), /no token in the Keychain under rsva-agents-github-r3cursiva or rsva-agents-github/);
-  assert.ok(!existsSync(q.worktree), "the clone rolled back");
+  assert.ok(!existsSync(q.worktree), "no clone");
+  assert.deepEqual(none.server.log, [], "a missing token is found before the claim: it is not an attempt");
 });
 
 test("githubOwner: the owner of a github.com remote, https or ssh; nothing for another host", () => {

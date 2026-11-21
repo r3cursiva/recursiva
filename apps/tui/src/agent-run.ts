@@ -6,13 +6,13 @@
 // Every call goes with the agent's own token, the one in its session's settings file: the run is the agent's, and the
 // server lets only its holder renew or fail it. The owner's credential (the TUI's engine) never holds a run.
 //
-// The lease is an hour and is renewed every quarter of an hour: three renewals can be missed (a network blip) before it
-// passes, and a Mac that sleeps or closes frees the issue within the hour. A session that outlives its lease (the Mac
-// slept through it) claims again: the expired run counts as an attempt, and the agent's `complete` finds a live run.
+// The lease is an hour and is renewed every quarter of an hour, while the TUI is open or `rsva-tui agents` runs: three
+// renewals can be missed (a network blip) before it lapses, and a Mac that sleeps or closes frees the issue for other
+// agents within the hour. A lapsed lease stays the holder's until another agent claims: a late renewal, and the agent's
+// own `complete`, just work.
 import { readFile } from "node:fs/promises";
 import type { RunStage } from "@rsva/schema/models";
-import { ApiError, Client } from "@rsva/terminal/client";
-import type { Run, Runs } from "./dispatch.ts";
+import { Client } from "@rsva/terminal/client";
 
 /** The lease a dispatch asks for, in seconds, and how often a live session renews it. */
 const LEASE_S = 3600;
@@ -73,36 +73,33 @@ export async function sessionCalls(settings: string, callsOf: CallsOf = restCall
   return callsOf({ ...(RSVA_URL ? { RSVA_URL } : {}), ...(RSVA_WS ? { RSVA_WS } : {}), RSVA_TOKEN });
 }
 
-/** What one look at a run did: its claim may be new (claimed again after its lease passed). */
+/** What one look at a run did. */
 export type Tended =
   | { did: "renewed" | "failed"; run: ServerRun }
   /** The run is no longer this session's: the agent ended it, or another took the issue. Nothing more to do. */
-  | { did: "ended"; run: ServerRun | null; why?: string }
-  | { did: "reclaimed"; run: ServerRun };
+  | { did: "ended"; run: ServerRun | null };
 
 /**
- * One look at the session's run: a live session renews it, or claims again when its lease passed; an ended session
- * fails it if it is still live. A run the agent ended, or one that is not this claim's, is left alone.
+ * One look at the session's run: a live session renews it (a lapsed lease too: it is still the holder's); an ended
+ * session fails it if it is still open. A run the agent ended, or one that is not this claim's, is left alone.
  */
 export async function tend(key: string, claim: Claim, alive: boolean, calls: RunCalls): Promise<Tended> {
   const now = await calls.latest(key);
   if (!now || now.id !== claim.id || now.outcome !== null) return { did: "ended", run: now };
-  if (!alive) return { did: "failed", run: await calls.fail(key, SESSION_ENDED) };
-  if (now.live) return { did: "renewed", run: await calls.renew(key) };
-  try {
-    return { did: "reclaimed", run: await calls.claim(key, claim.stage) };
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 409) return { did: "ended", run: now, why: e.message };
-    throw e;
-  }
+  return alive ? { did: "renewed", run: await calls.renew(key) } : { did: "failed", run: await calls.fail(key, SESSION_ENDED) };
 }
 
+/** Looks in a row that must miss a session before it counts as ended: Rex may list none for a moment. */
+const GONE_LOOKS = 2;
+
 /**
- * When to look at each session's run: a live one every RENEW_MS from its start, an ended one once; a call that threw
- * is tried again after RETRY_MS. One look at a time per run.
+ * When to look at each session's run: a live one every RENEW_MS from its start, an ended one once, after GONE_LOOKS
+ * looks in a row have missed it; a call that threw is tried again after RETRY_MS. One look at a time per run.
  */
 export class Tending {
   private readonly next = new Map<string, number>();
+  private readonly retry = new Map<string, number>();
+  private readonly missed = new Map<string, number>();
   private readonly settled = new Set<string>();
   private readonly busy = new Set<string>();
   private readonly now: () => number;
@@ -110,10 +107,16 @@ export class Tending {
     this.now = now;
   }
 
-  /** The look, if one is due: what it did, or null. */
-  async look(key: string, claim: Claim, startedAt: string, alive: boolean, calls: () => Promise<RunCalls | null>): Promise<Tended | null> {
+  /** The look, if one is due: what it did, or null. `seen`: whether this look found the session. */
+  async look(key: string, claim: Claim, startedAt: string, seen: boolean, calls: () => Promise<RunCalls | null>): Promise<Tended | null> {
     const id = claim.id;
-    const at = this.next.get(id) ?? (alive ? Date.parse(startedAt) + RENEW_MS : 0);
+    const missed = seen ? 0 : (this.missed.get(id) ?? 0) + 1;
+    this.missed.set(id, missed);
+    const alive = missed < GONE_LOOKS;
+    // Missed once: not ended yet, and nothing to renew until the next look says which it is.
+    if (!seen && alive) return null;
+    // An ended session is looked at at once; a live one when its renewal is due; either after a failed call's wait.
+    const at = Math.max(alive ? (this.next.get(id) ?? Date.parse(startedAt) + RENEW_MS) : 0, this.retry.get(id) ?? 0);
     if (this.settled.has(id) || this.busy.has(id) || this.now() < at) return null;
     this.busy.add(id);
     try {
@@ -125,11 +128,9 @@ export class Tending {
       const t = await tend(key, claim, alive, c);
       if (t.did === "renewed") this.next.set(id, this.now() + RENEW_MS);
       else this.settled.add(id);
-      // A new claim was just made: its first renewal is a period away.
-      if (t.did === "reclaimed") this.next.set(t.run.id, this.now() + RENEW_MS);
       return t;
     } catch (e) {
-      this.next.set(id, this.now() + RETRY_MS);
+      this.retry.set(id, this.now() + RETRY_MS);
       throw e;
     } finally {
       this.busy.delete(id);
@@ -137,19 +138,23 @@ export class Tending {
   }
 }
 
+/** What a look did, in words for the owner; null when there is nothing to tell (a renewal, a run the agent ended). */
+export function tendedText(key: string, t: Tended): string | null {
+  if (t.did !== "failed") return null;
+  return `${key}: ${SESSION_ENDED} · ${t.run.stage} run failed, attempt ${t.run.attempt}${t.run.outcome === "stopped" ? " · the loop stopped, the issue went to review" : ""}`;
+}
+
+/**
+ * The sessions Rex lists, looked at twice when one of `wanted` is missing: a one-shot listing (`rsva-tui agents`) holds
+ * a session ended only when two looks in a row miss it, as the screen does.
+ */
+export async function sessionsSeen(list: () => Promise<Set<string>>, wanted: readonly string[], pause: () => Promise<void>): Promise<Set<string>> {
+  const first = await list();
+  if (wanted.every((id) => first.has(id))) return first;
+  await pause();
+  return new Set([...first, ...(await list())]);
+}
+
 /** A run's state in a word: its outcome, or live, or expired when its lease passed with nobody closing it yet. */
 export const runWord = (r: ServerRun) => r.outcome ?? (r.live ? "live" : "expired");
 
-/**
- * What a look did, kept and said: a new claim goes on the local run, so the next look and the agent's `complete` are
- * about it; the words for the owner, or null when there is nothing to tell (a renewal, a run the agent ended).
- */
-export async function settle(runs: Pick<Runs, "put">, r: Run, t: Tended): Promise<string | null> {
-  if (t.did === "reclaimed") {
-    await runs.put({ ...r, claim: { id: t.run.id, stage: t.run.stage, attempt: t.run.attempt } });
-    return `${r.key}: the lease passed while the session lived · claimed again, attempt ${t.run.attempt}`;
-  }
-  if (t.did === "failed") return `${r.key}: ${SESSION_ENDED} · ${t.run.stage} run failed, attempt ${t.run.attempt}${t.run.outcome === "stopped" ? " · the loop stopped, the issue went to review" : ""}`;
-  if (t.did === "ended" && t.why) return `${r.key}: the lease passed and the issue was not claimed again: ${t.why}`;
-  return null;
-}
