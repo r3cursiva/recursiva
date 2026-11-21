@@ -14,6 +14,8 @@ export interface Completable {
   query: boolean;
   /** Fixed values of the arguments, by position. */
   values: readonly (readonly string[] | undefined)[];
+  /** Fixed values of a flag for this command only, by its long name: ahead of ZshInput.flagValues. */
+  flagValues: Partial<Record<string, readonly string[]>>;
 }
 
 /**
@@ -32,7 +34,7 @@ export const ORDER_WORDS = ["updatedAt", "createdAt", "priority", "dueDate", "st
 export const RELATION_WORDS = ["blockedBy", "blocks", "related", "duplicateOf", "duplicates"] as const;
 /** The stages of an agent's run (RUN_STAGES of @rsva/schema). */
 export const RUN_STAGES = ["triage", "work", "verify"] as const;
-/** Where `cycle complete` moves the open issues besides a cycle. */
+/** Where `cycle complete --move-to` moves the open issues besides a cycle. */
 export const MOVE_WORDS = ["next", "none"] as const;
 /** Relative dates of the query (DATE_PRESETS of @rsva/query). */
 const DATE_WORDS = ["today", "yesterday", "tomorrow", "<today", "this-week", "last-week", "next-week", "this-month", "last-month", "next-month", "last-7-days", "last-30-days", "next-7-days", "next-2-weeks", "next-30-days"] as const;
@@ -82,6 +84,9 @@ export function zsh(o: ZshInput): string {
   const all = [...o.commands.map((c) => [c.name, c] as const), ...Object.entries(o.groups).flatMap(([g, cs]) => cs.map((c) => [`${g} ${c.name}`, c] as const))];
   const flagCases = all.map(([name, c]) => `    (${quoted(name)}) flags=(${words(c.flags.flatMap(spellings))}) ;;`).join("\n");
   const argCases = all.flatMap(([name, c]) => c.values.flatMap((vs, n) => (vs?.length ? [`    (${quoted(`${name}:${n}`)}) compadd -- ${words(vs)}; return ;;`] : []))).join("\n");
+  const ownFlagValueCases = all
+    .flatMap(([name, c]) => Object.entries(c.flagValues).flatMap(([f, vs]) => (vs?.length ? [`    (${spellings(f).map((s) => quoted(`${name}:${s}`)).join("|")}) compadd -- ${words(vs)}; return ;;`] : [])))
+    .join("\n");
   const flagValueCases = Object.entries(o.flagValues).map(([f, vs]) => `    (${spellings(f).map(quoted).join("|")}) compadd -- ${words(vs)}; return ;;`).join("\n");
   const groupCases = Object.entries(o.groups)
     .map(
@@ -115,7 +120,10 @@ _rsva() {
   case $cmd in
 ${groupCases}
   esac
-  # The word after a flag is its value: the fixed ones, or nothing to offer.
+  # The word after a flag is its value: the command's own fixed ones, the flag's, or nothing to offer.
+  case "$cmd:$words[CURRENT-1]" in
+${ownFlagValueCases}
+  esac
   case $words[CURRENT-1] in
 ${flagValueCases}
   esac
