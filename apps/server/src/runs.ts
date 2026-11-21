@@ -138,22 +138,42 @@ function inline(s: string): DocNode[] {
 export type StopMove = { moved: true } | { moved: false; refused?: string };
 
 /** Why the issue stays where it is, when a move to review was not made: no review state, or the pipeline's refusal. */
-const stays = (move: StopMove & { moved: false }) =>
-  move.refused ? [text("The move to review was refused ("), ...inline(move.refused), text("), so the issue stays where it is")] : [text("The project has no review state, so the issue stays where it is")];
+/** How much of the pipeline's refusal a comment quotes: its head, which says why. */
+const REFUSAL_MAX = 300;
 
 /**
- * The comment a done run with criteria leaves on the issue: each "Done when" criterion with the run's evidence for it,
- * the run's note, and a refused move to review. Each on its own line, as text with its inline code and bare URLs: a
- * criterion's other Markdown (a mention, a heading) is quoted, not repeated.
+ * Why the issue stays: no review state, or the pipeline's refusal, quoted as plain text on one line (the server's words,
+ * no code or links in them), so escaping at most doubles each character of it (doneCommentMax).
  */
-export function evidenceComment(stage: string, proof: readonly { criterion: string; evidence: string }[], note: string | null, move: StopMove = { moved: true }): string {
+const stays = (move: StopMove & { moved: false }) =>
+  move.refused
+    ? [text(`The move to review was refused (${move.refused.replace(/\s+/g, " ").trim().slice(0, REFUSAL_MAX)}), so the issue stays where it is`)]
+    : [text("The project has no review state, so the issue stays where it is")];
+
+/**
+ * The comment a done run leaves on the issue, or null when it has nothing to say: each "Done when" criterion with the
+ * run's evidence for it and the run's note, and a refused move to review (said even without criteria, so the issue tells
+ * why it stayed). Each on its own line, as text with its inline code and bare URLs: a criterion's other Markdown (a
+ * mention, a heading) is quoted, not repeated.
+ */
+export function doneComment(stage: string, proof: readonly { criterion: string; evidence: string }[], note: string | null, move: StopMove = { moved: true }): string | null {
+  const refused = !move.moved && move.refused ? [paragraph([...stays(move), text(".")])] : [];
+  if (!proof.length && !refused.length) return null;
   return comment([
-    paragraph([text(`Completed the ${stage} stage. Done when, with evidence:`)]),
+    paragraph([text(proof.length ? `Completed the ${stage} stage. Done when, with evidence:` : `Completed the ${stage} stage.`)]),
     list(proof.map((p) => [...inline(p.criterion), text(" — "), ...inline(p.evidence)])),
     ...(note ? [paragraph(inline(note))] : []),
-    ...(!move.moved && move.refused ? [paragraph([...stays(move), text(".")])] : []),
+    ...refused,
   ]);
 }
+
+/**
+ * The longest a done run's comment can come out, refusal included: checked before the run ends, so a comment the
+ * pipeline would refuse for its length is refused with the completion instead of after it. A refusal is cut to
+ * REFUSAL_MAX and escaping at most doubles a character, which a quoted run of asterisks does.
+ */
+export const doneCommentMax = (stage: string, proof: readonly { criterion: string; evidence: string }[], note: string | null): number =>
+  doneComment(stage, proof, note, { moved: false, refused: "*".repeat(REFUSAL_MAX) })?.length ?? 0;
 
 /** The comment a stop leaves on the issue: why, each attempt (outcome, note, the error's first line), and what resets it. */
 export function stopComment(stage: string, reason: string, tried: readonly Tried[], move: StopMove): string {

@@ -24,7 +24,7 @@ import type { DocNode } from "@rsva/editor/doc";
 import { toMarkdown } from "@rsva/editor/markdown";
 import { can, refusal } from "@rsva/policy";
 import { uuidv7 } from "@rsva/protocol";
-import { COMMENT_MAX, isClosedGroup, RUN_STAGES, startedStage, type RunOutcome, type RunStage } from "@rsva/schema/models";
+import { COMMENT_MAX, RUN_STAGES, startedStage, type RunOutcome, type RunStage, type WorkflowState } from "@rsva/schema/models";
 import { and, asc, desc, eq, gt, isNull, ne, or, sql as dsql } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { loadNames } from "./api-names.ts";
@@ -34,7 +34,7 @@ import { RateLimited } from "./auth/limits.ts";
 import { db, schema, type Tx } from "./db.ts";
 import { CRITERIA_MAX, doneWhen, proofOf, type Proof } from "./done-when.ts";
 import { HttpError } from "./http.ts";
-import { ERROR_MAX, NOTE_MAX, attemptsOf, evidenceComment, fingerprint, leaseSeconds, LEASE_MAX, LEASE_MIN, stopComment, stopReason, type StopMove } from "./runs.ts";
+import { ERROR_MAX, NOTE_MAX, attemptsOf, doneComment, doneCommentMax, fingerprint, leaseSeconds, LEASE_MAX, LEASE_MIN, stopComment, stopReason, type StopMove } from "./runs.ts";
 import { metered } from "./sync/history.ts";
 import { takeWrite, writeRetryAfter } from "./sync/limits.ts";
 import { retrying, uniqueViolation } from "./sync/retry.ts";
@@ -167,27 +167,39 @@ interface ReviewView {
 }
 
 /**
- * The issue to the project's review state (the started group's second state, startedStage) with one comment, as the
+ * The issue to the project's review state (the started group's second state, startedStage) with a comment, as the
  * caller, in one transaction of the pipeline (under `txId` when given). `moves` says whether the issue's state now
- * should move at all; when not, or the project has no review state, the comment goes alone. When the pipeline refuses
- * the two (the review state is for people only, say), the comment goes alone in a second, told of the refusal, so what
- * it says is not lost with the move. A refusal of the comment too is said in the answer.
+ * should move at all; when not, or the project has no review state, the comment goes alone. `comment` says what the
+ * comment is for a move, or that there is none (null). When the pipeline refuses the two (the review state is for
+ * people only, say), the comment for that refusal goes alone in a second, so the issue says why it stayed. A refusal
+ * of the comment too is said in the answer.
  */
-async function writeReview(req: FastifyRequest, found: Found, comment: ((move: StopMove) => string) | null, moves: (group: string) => boolean, txId?: string): Promise<ReviewView> {
+async function writeReview(
+  req: FastifyRequest,
+  found: Found,
+  comment: (move: StopMove) => string | null,
+  moves: (state: WorkflowState | undefined, states: WorkflowState[]) => boolean,
+  txId?: string,
+): Promise<ReviewView> {
   const w = found.w;
   const n = await loadNames(w.workspaceId);
   const states = [...n.states.values()].filter((s) => s.projectId === found.issue.projectId);
   const [now] = await db.select({ stateId: issue.stateId }).from(issue).where(eq(issue.id, found.issue.id));
-  const target = now && moves(n.states.get(now.stateId)?.group ?? "") ? states.find((s) => startedStage(states, s.id) === "review") : undefined;
-  const comments = (move: StopMove) => (comment ? [commentOp(found.issue.id, comment(move))] : []);
+  const target = now && moves(n.states.get(now.stateId), states) ? states.find((s) => startedStage(states, s.id) === "review") : undefined;
+  const comments = (move: StopMove) => {
+    const body = comment(move);
+    return body === null ? [] : [commentOp(found.issue.id, body)];
+  };
   const out = { movedTo: target?.name ?? null };
   const move: Op[] = target && now?.stateId !== target.id ? [{ op: "update", m: "Issue", id: found.issue.id, set: { stateId: target.id } }] : [];
-  const ops = [...move, ...comments(target ? { moved: true } : { moved: false })];
+  const first = comments(target ? { moved: true } : { moved: false });
+  const ops = [...move, ...first];
   if (!ops.length) return { ...out, moved: !!target, written: false };
   const both = await writeAfter(req, w, ops, txId);
-  if (!("refused" in both)) return { ...out, moved: !!target, written: !!comment };
+  if (!("refused" in both)) return { ...out, moved: !!target, written: first.length > 0 };
   if (!move.length) return { ...out, moved: !!target, written: false, refused: both.refused };
-  const alone = comment ? await writeAfter(req, w, comments({ moved: false, refused: both.refused })) : both;
+  const second = comments({ moved: false, refused: both.refused });
+  const alone = second.length ? await writeAfter(req, w, second) : both;
   return { ...out, moved: false, written: !("refused" in alone), refused: both.refused };
 }
 
@@ -309,7 +321,8 @@ async function endOwn(req: Req, ending: (b: Record<string, unknown>) => Ending) 
       if (what.kind === "done") {
         const checked = PROVING.includes(live.stage) ? proofOf(criteria, what.evidence) : { proof: [] };
         if ("refused" in checked) return { refused: `${found.issue.key}: ${checked.refused}; \`rsva run criteria ${found.issue.key}\` lists them` };
-        const length = checked.proof.length ? evidenceComment(live.stage, checked.proof, what.note).length : 0;
+        // The longest the comment can come out, a refused move to review included.
+        const length = doneCommentMax(live.stage, checked.proof, what.note);
         if (length > COMMENT_MAX) return { refused: `${found.issue.key}: the evidence makes a comment of ${length} characters, over ${COMMENT_MAX}; shorten it` };
         proof = checked.proof;
         return endRun(tx, live, "done", { note: what.note, evidence: proof.length ? proof : null });
@@ -325,15 +338,25 @@ async function endOwn(req: Req, ending: (b: Record<string, unknown>) => Ending) 
 }
 
 /**
- * What a done run writes on the issue, as the caller: a work run moves it to review (from an open state other than
- * review: a closed issue stays closed), with the evidence comment when there is evidence, in one transaction; a refused
- * move leaves the comment alone, saying so. Another stage writes the comment only.
+ * Whether a done work run moves the issue on to review: only from before it, a backlog or unstarted state or the first
+ * started one (startedStage "progress"); in review it is there already. One past review (approved) or closed stays: a
+ * finished stage of the agent does not take a person's approval back.
+ */
+const beforeReview = (state: WorkflowState | undefined, states: WorkflowState[]) =>
+  !!state && (state.group === "backlog" || state.group === "unstarted" || (state.group === "started" && startedStage(states, state.id) !== "approved"));
+
+/**
+ * What a done run writes on the issue, as the caller: a work run moves it to review (beforeReview), with the evidence
+ * comment when there is evidence, in one transaction; a refused move leaves a comment alone, saying why, with the
+ * evidence or without. Another stage writes the evidence comment only.
  */
 async function writeDone(req: FastifyRequest, found: Found, row: Row, proof: Proof[]) {
   const work = row.stage === "work";
   if (!work && !proof.length) return {};
-  const r = await writeReview(req, found, proof.length ? (move) => evidenceComment(row.stage, proof, row.note, move) : null, (group) => work && !isClosedGroup(group));
-  const comment = proof.length ? { comment: r.written ? { written: true } : { written: false, refused: r.refused } } : {};
+  const r = await writeReview(req, found, (move) => doneComment(row.stage, proof, row.note, move), (state, states) => work && beforeReview(state, states));
+  // A comment was due: the evidence, or the reason a move to review was refused.
+  const due = proof.length > 0 || (r.movedTo !== null && !r.moved);
+  const comment = due ? { comment: r.written ? { written: true } : { written: false, refused: r.refused } } : {};
   const review = r.movedTo ? { review: { movedTo: r.movedTo, moved: r.moved, ...(r.moved ? {} : { refused: r.refused }) } } : {};
   return { ...comment, ...review };
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { and, eq, isNull, sql as dsql } from "drizzle-orm";
 import { db, schema } from "./db.ts";
+import { doneComment } from "./runs.ts";
 import { addMember, apiFixture, asToken, fetchAs } from "./test/helpers.ts";
 
 /** A second agent of the workspace, with its own token. */
@@ -446,4 +447,46 @@ test("a failure of the environment is recorded as blocked, takes no agent attemp
   assert.match(comment!.body, /^Stopped the work loop: 3 failures of the environment, not of the agent/);
   assert.match(comment!.body, /\n3\. blocked — error: git push denied \(403\)\n/);
   assert.deepEqual(((await call(f.owner, "GET", runs(key))).body.runs as Run[]).map((r) => r.outcome), ["stopped", "blocked", "blocked", "failed", "failed"]);
+});
+
+test("a done work run without criteria whose move to review is refused still says why on the issue", async () => {
+  const key = await newIssue("Nothing to prove, review for people", { state: "In Progress" });
+  await reviewForPeople(async () => {
+    await claim(f.agent, key);
+    const done = await complete(f.agent, key, { note: "PR #7" });
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.deepEqual([done.body.review?.moved, done.body.comment], [false, { written: true }], JSON.stringify(done.body));
+    assert.equal(await stateOf(key), "In Progress");
+    const [comment, ...more] = await commentsStarting(key, "Completed the");
+    assert.equal(more.length, 0);
+    assert.match(comment!.body, /^Completed the work stage\.\n\nPR #7\n\nThe move to review was refused \(.*people set this state.*\), so the issue stays where it is\.$/);
+  });
+});
+
+test("a done work run leaves an issue past review where it is: an agent does not take an approval back", async () => {
+  const key = await newIssue("Approved already");
+  assert.equal((await call(f.owner, "PATCH", `/issues/${key}`, { state: "Approved" })).status, 200);
+  await claim(f.agent, key);
+  const done = await complete(f.agent, key);
+  assert.deepEqual([done.status, done.body.review, done.body.comment], [200, undefined, undefined], JSON.stringify(done.body));
+  assert.equal(await stateOf(key), "Approved");
+  assert.equal((await commentsStarting(key, "Completed the")).length, 0, "nothing was attempted, so nothing is said");
+});
+
+test("evidence that fits only without a refused move's paragraph is refused before the run ends", async () => {
+  const criteria = Array.from({ length: 33 }, (_, i) => `c${i}`);
+  const key = await newIssue("Evidence at the edge", { description: `## Done when\n\n${criteria.map((c) => `- ${c}`).join("\n")}` });
+  const evidence = (last: number) => criteria.map((_, i) => "x".repeat(i < 32 ? 2000 : last));
+  const sized = (last: number) => doneComment("work", criteria.map((criterion, i) => ({ criterion, evidence: evidence(last)[i]! })), null)!.length;
+  // The longest last evidence whose comment fits as written when the move succeeds.
+  const fits = 65536 - (sized(1) - 1);
+  assert.ok(fits > 1000 && fits <= 2000, String(fits));
+  assert.equal(sized(fits), 65536);
+  await claim(f.agent, key);
+  const over = await complete(f.agent, key, { evidence: evidence(fits) });
+  assert.equal(over.status, 400, "the comment of a refused move would be over the limit");
+  assert.match(over.body.message!, /over 65536; shorten it/);
+  const room = await complete(f.agent, key, { evidence: evidence(fits - 1000) });
+  assert.equal(room.status, 200, JSON.stringify(room.body).slice(0, 200));
+  assert.deepEqual(room.body.comment, { written: true });
 });

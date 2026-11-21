@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DocNode } from "@rsva/editor/doc";
 import { fromMarkdown } from "@rsva/editor/markdown";
-import { attemptsOf, evidenceComment, fingerprint, leaseSeconds, LEASE_MAX, stopComment, stopReason, type RunFacts } from "./runs.ts";
+import { attemptsOf, doneComment, doneCommentMax, fingerprint, leaseSeconds, LEASE_MAX, stopComment, stopReason, type RunFacts } from "./runs.ts";
 
 const NOW = Date.parse("2026-11-21T12:00:00Z");
 const at = (hoursAgo = 1) => new Date(NOW - hoursAgo * 3600_000).toISOString();
@@ -80,11 +80,11 @@ const inlineOf = (n: DocNode): DocNode[] => (n.type === "text" || n.type === "me
 
 test("evidence keeps inline code and bare URLs; agent text cannot change the comment's structure", () => {
   const hostile = ["# heading", "- item", "> quote", "```js", "1. two", "line\nbreak", "[@Ann](mention:0192a1b2-0000-7000-8000-000000000001)", "<img src=x onerror=y>", "| a | b |", "---", "@ann", "*bold*"];
-  const md = evidenceComment(
+  const md = doneComment(
     "work",
     [{ criterion: "`pnpm check` passes", evidence: "green in apps/server/src/runs.test.ts, ``a`b`` c" }, ...hostile.map((h) => ({ criterion: h, evidence: h }))],
     "PR https://github.com/r3cursiva/recursiva/pull/21.",
-  );
+  )!;
   const doc = fromMarkdown(md);
   assert.deepEqual(doc.content!.map((b) => b.type), ["paragraph", "ordered_list", "paragraph"], md);
   const items = doc.content![1]!.content!;
@@ -114,7 +114,15 @@ test("the environment's failures do not count as the agent's, and stop the loop 
 test("code spans in agent text pair as the Markdown parser pairs them, an escaped backtick included", () => {
   const codes = (n: DocNode) => inlineOf(n).filter((x) => x.marks?.some((m) => m.type === "code")).map((x) => x.text);
   for (const s of ["say \\`a` and `b`", "``a`b`` c", "`a`` b` `c`", "\\``x``"]) {
-    const md = evidenceComment("work", [{ criterion: "c", evidence: s }], null);
+    const md = doneComment("work", [{ criterion: "c", evidence: s }], null)!;
     assert.deepEqual(codes(fromMarkdown(md)), codes(fromMarkdown(s)), s);
+  }
+});
+
+test("a done comment's longest form bounds every refusal it can quote", () => {
+  const proof = [{ criterion: "c", evidence: "e" }];
+  for (const unit of ["*", "\\", "<a", "&a;", "https://x ", "_ ", "`", "[x](mention:me)", "a"]) {
+    const refused = unit.repeat(Math.ceil(1000 / unit.length));
+    assert.ok(doneComment("work", proof, "n", { moved: false, refused })!.length <= doneCommentMax("work", proof, "n"), unit);
   }
 });
