@@ -73,6 +73,9 @@ export interface Proof {
   evidence: string;
 }
 
+/** The most criteria a completion proves: a longer list is refused rather than read. */
+export const CRITERIA_MAX = 50;
+
 /** The longest evidence kept for one criterion: a link and a line or two. */
 const EVIDENCE_MAX = 2000;
 
@@ -81,6 +84,7 @@ const EVIDENCE_MAX = 2000;
  * why it is refused, naming the first criterion without evidence.
  */
 export function proofOf(criteria: readonly string[], given: unknown): { proof: Proof[] } | { refused: string } {
+  if (criteria.length > CRITERIA_MAX) return { refused: `the Done when list has ${criteria.length} criteria, more than ${CRITERIA_MAX}; shorten it` };
   const list = given ?? [];
   if (!Array.isArray(list) || !list.every((e) => typeof e === "string")) return { refused: "evidence: a list of text, one per criterion of Done when, in order" };
   if (list.length > criteria.length) return { refused: `evidence: ${list.length} given for ${criteria.length} criteria of Done when` };

@@ -669,6 +669,10 @@ test("runs: claim, renew, complete and fail send their bodies; a stop is said; t
   assert.equal((await cli(["run", "criteria", "CORE-1"])).out, "1. tests pass\n2. docs updated");
   answers = [{ body: { runs: [], criteria: [] } }];
   assert.equal((await cli(["run", "criteria", "CORE-1"])).out, "no Done when list: complete needs no evidence");
+  answers = [{ body: { runs: [], criteria: ["a"], moreCriteria: 3 } }];
+  assert.equal((await cli(["run", "criteria", "CORE-1"])).out, "1. a\nand 3 more: complete refuses a list this long; shorten it");
+  answers = [{ body: { runs: [row()], more: true, criteria: [] } }];
+  assert.match((await cli(["runs", "CORE-1"])).out, /\nthe newest 1; older runs are not listed$/);
   answers = [{ body: { run: row({ outcome: "done", live: false, evidence: proof, endedAt: "2026-11-21T09:00:00.000Z" }), comment: { written: true } } }];
   assert.equal((await cli(["run", "complete", "CORE-1", "--evidence", "a", "--evidence", "b"])).out, "completed CORE-1 work attempt 1: done at 2026-11-21T09:00:00.000Z\ncommented the evidence for 2 criteria");
 

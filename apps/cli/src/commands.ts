@@ -587,7 +587,7 @@ async function evidence(c: Ctx): Promise<string[] | undefined> {
   return Promise.all(given.map(async (e) => (await text(c, e))!));
 }
 
-const runsOf = (c: Ctx) => c.api.request<{ runs: RunRow[]; criteria: string[] }>("GET", issuePath(c, "/runs"));
+const runsOf = (c: Ctx) => c.api.request<{ runs: RunRow[]; more?: boolean; criteria: string[]; moreCriteria?: number }>("GET", issuePath(c, "/runs"));
 
 const runCall = (c: Ctx, tail: string, body: Record<string, unknown>, says: string) =>
   wrote(c, c.api.request<RunAnswer>("POST", issuePath(c, `/runs${tail}`), { body: given(body) }), ranLine(c, says));
@@ -609,7 +609,7 @@ const runCommands: Record<string, Command> = {
   fail: {
     args: "<key>",
     flags: "--error T [--note T]",
-    about: "end your live run as failed; three failed attempts, or the same error twice in a row, stop the loop: the issue goes to review with a comment of what was tried",
+    about: "end your live run as failed; three failed attempts in a day, or the same error twice in a row, stop the loop: the issue goes to review with a comment of what was tried. The error (its first 500 characters are kept) is visible to everyone in the workspace: no secrets in it",
     async run(c) {
       if (c.v.error === undefined) throw new UsageError("fail: what failed? --error TEXT, - reads it from stdin");
       return runCall(c, "/fail", { error: await text(c, c.v.error), note: c.v.note }, "failed");
@@ -618,14 +618,14 @@ const runCommands: Record<string, Command> = {
   criteria: {
     args: "<key>",
     about: "the issue's Done when criteria, numbered: what complete needs evidence for, in this order",
-    run: async (c) => shown(c, await runsOf(c), (d) => criteriaList(d.criteria, c.style)),
+    run: async (c) => shown(c, await runsOf(c), (d) => criteriaList(d.criteria, c.style, d.moreCriteria)),
   },
 };
 
 const runs: Command = {
   args: "<key>",
   about: "an issue's agent runs, newest first: attempt, stage, outcome, agent, when, note",
-  run: async (c) => shown(c, await runsOf(c), (d) => runList(d.runs, c.style)),
+  run: async (c) => shown(c, await runsOf(c), (d) => runList(d.runs, c.style, d.more)),
 };
 
 const cycles: Command = {

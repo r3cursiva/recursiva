@@ -4,7 +4,7 @@
 import { deniedOps } from "@rsva/policy";
 import { txChunks, uuidv7, type Op, type SplitOps } from "@rsva/protocol";
 import { movedKeysOf, parseIssueKey, type Project } from "@rsva/schema/models";
-import { and, eq, type SQL } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { FastifyRequest } from "fastify";
 import { loadNames, projectByKey, type Names } from "./api-names.ts";
 import { accessBySlug, granted, type Access } from "./auth/access.ts";
@@ -28,7 +28,7 @@ export async function issueByKey(req: FastifyRequest<{ Params: IssueParams }>) {
   // Any case: an agent or a person may type "plnr-27". A number no issue can have is no issue, not a failed query.
   const k = parseIssueKey(req.params.key);
   const { project, issue } = schema;
-  const columns = { id: issue.id, projectId: issue.projectId, deletedAt: issue.deletedAt, key: issueKeySql };
+  const columns = { id: issue.id, projectId: issue.projectId, deletedAt: issue.deletedAt, archived: sql<boolean>`(${issue.archivedAt} is not null or ${project.archivedAt} is not null)`, key: issueKeySql };
   const find = (where: SQL) => db.select(columns).from(issue).innerJoin(project, eq(project.id, issue.projectId)).where(and(eq(project.workspaceId, w.workspaceId), where));
   // A project's issue first; a key no project's issue answers to may be one an issue had before a move (PLNR-448).
   let row = k ? (await find(and(projectKeyIs(k.projectKey), eq(issue.number, k.number))!))[0] : undefined;
@@ -79,8 +79,8 @@ export const okTx = (r: { s: number }) => ({ ok: true, lastSyncId: r.s });
  * Applies ops as the caller, if their role, scope and write budget (sync/limits.ts, shared with their sockets) allow:
  * a 429 or 403 otherwise, and the pipeline's refusal (TxError) as its code says (http.ts, txStatus).
  */
-export async function writeTx(req: FastifyRequest, w: Access, ops: Op[]) {
-  const out = (await submitTx({ workspaceId: w.workspaceId, userId: req.actor!.userId, txId: uuidv7(), ops, viewer: () => w.viewer, signedIn: req.actor!.via === "session" }))!;
+export async function writeTx(req: FastifyRequest, w: Access, ops: Op[], txId = uuidv7()) {
+  const out = (await submitTx({ workspaceId: w.workspaceId, userId: req.actor!.userId, txId, ops, viewer: () => w.viewer, signedIn: req.actor!.via === "session" }))!;
   if (out.ok) return out.r;
   const no = out.refused;
   if (no.by === "budget") throw new RateLimited(no.retryAfter, "too many changes");

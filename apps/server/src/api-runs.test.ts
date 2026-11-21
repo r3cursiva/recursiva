@@ -19,7 +19,7 @@ const f = apiFixture(async (ws) => {
 type Run = { id: string; issue: string; stage: string; attempt: number; agent: string; outcome: string | null; live: boolean; leaseUntil: string; note: string | null; error: string | null; evidence: { criterion: string; evidence: string }[] | null };
 type Answer = {
   status: number;
-  body: Record<string, unknown> & { run?: Run; stop?: { reason: string; movedTo: string | null; written: boolean }; comment?: { written: boolean }; message?: string; error?: string };
+  body: Record<string, unknown> & { run?: Run; stop?: { reason: string; movedTo: string | null; moved: boolean; written: boolean; refused?: string }; comment?: { written: boolean }; message?: string; error?: string };
 };
 
 const call = async (as: typeof fetch, method: string, path: string, body?: unknown): Promise<Answer> => {
@@ -40,6 +40,14 @@ async function newIssue(title: string, more: Record<string, unknown> = {}): Prom
 async function expire(key: string): Promise<void> {
   const [{ id }] = (await call(f.agent, "GET", runs(key))).body.runs as [Run];
   await db.update(schema.run).set({ leaseUntil: dsql`now() - interval '1 second'` }).where(eq(schema.run.id, id));
+}
+
+/** Two failed attempts with different errors: the next failure or expiry stops the loop. */
+async function failTwice(key: string): Promise<void> {
+  for (const error of ["one", "two"]) {
+    await claim(f.agent, key);
+    await fail(f.agent, key, error);
+  }
 }
 
 const stateOf = async (key: string) => (await call(f.owner, "GET", `/issues/${key}`)).body.state as string;
@@ -68,7 +76,7 @@ test("two claims racing leave exactly one live run", async () => {
   assert.equal(live.length, 1);
 });
 
-test("renew and complete only by the holder; a claim after done counts afresh", async () => {
+test("renew and complete only by the holder; done does not reset the attempt count", async () => {
   const key = await newIssue("Held and finished");
   const mine = (await claim(f.agent, key, { lease: 60 })).body.run!;
   assert.equal((await call(other, "POST", runs(key, "/renew"), { lease: 3600 })).status, 403);
@@ -82,19 +90,34 @@ test("renew and complete only by the holder; a claim after done counts afresh", 
   const done = await call(f.agent, "POST", runs(key, "/complete"), { note: "shipped in #12" });
   assert.deepEqual([done.status, done.body.run!.outcome, done.body.run!.note, done.body.run!.attempt], [200, "done", "shipped in #12", 2]);
   assert.equal((await call(f.agent, "POST", runs(key, "/complete"), {})).status, 409, "no live run left");
-  assert.equal((await claim(other, key)).body.run!.attempt, 1);
+  assert.equal((await claim(other, key)).body.run!.attempt, 3, "the agent's own done does not reset the cap");
   const list = (await call(f.owner, "GET", runs(key))).body.runs as Run[];
   assert.deepEqual(list.map((r) => [r.outcome, r.agent]), [[null, otherEmail], ["done", agentEmail], ["failed", agentEmail]], "newest first");
 });
 
-test("an expired lease frees the issue: the next claim closes it as expired and it counts as an attempt", async () => {
+test("a lapsed lease stays the holder's until another claim finds it: then it is expired and counts as an attempt", async () => {
   const key = await newIssue("Gone quiet");
   await claim(f.agent, key);
   await expire(key);
-  assert.equal((await call(f.agent, "POST", runs(key, "/renew"), {})).status, 409, "the holder's lease is over");
+  const renewed = await call(f.agent, "POST", runs(key, "/renew"), { lease: 600 });
+  assert.equal(renewed.status, 200, "a late renew by the holder just works");
+  assert.ok(Date.parse(renewed.body.run!.leaseUntil) > Date.now() + 500_000, "extended from now");
+  await expire(key);
   const next = await claim(other, key);
   assert.deepEqual([next.status, next.body.run!.attempt], [201, 2], JSON.stringify(next.body));
   assert.deepEqual(((await call(f.owner, "GET", runs(key))).body.runs as Run[]).map((r) => r.outcome), [null, "expired"]);
+  const late = await complete(f.agent, key);
+  assert.equal(late.status, 403, "the old holder's run is closed: the open one is another's");
+
+  // Finished work on a lapsed lease nobody took is recorded as done, not as a failure.
+  const quiet = await newIssue("Finished while the Mac slept");
+  await claim(f.agent, quiet);
+  await expire(quiet);
+  const done = await complete(f.agent, quiet, { note: "PR #9" });
+  assert.deepEqual([done.status, done.body.run?.outcome], [200, "done"], JSON.stringify(done.body));
+  await claim(other, key).then((r) => assert.equal(r.status, 409));
+  await call(other, "POST", runs(key, "/fail"), { error: "x" });
+  assert.equal((await call(f.agent, "POST", runs(key, "/renew"), {})).status, 409, "no open run: claim it again");
 });
 
 test("the third failure stops the loop: to review, one comment of what was tried, claims refused until a person resets it", async () => {
@@ -105,7 +128,7 @@ test("the third failure stops the loop: to review, one comment of what was tried
     assert.equal(r.status, 200, JSON.stringify(r.body));
     if (i < 2) assert.equal(r.body.stop, undefined, "different errors twice do not stop");
     else {
-      assert.deepEqual(r.body.stop, { reason: "3 failed attempts", movedTo: "In Review", written: true });
+      assert.deepEqual(r.body.stop, { reason: "3 failed attempts", movedTo: "In Review", moved: true, written: true });
       assert.equal(r.body.run!.outcome, "stopped");
     }
   }
@@ -140,10 +163,7 @@ test("the same error twice in a row stops the loop", async () => {
 
 test("an expiry that makes the third failure stops the loop at the claim that finds it", async () => {
   const key = await newIssue("Fails, then goes quiet");
-  for (const error of ["one", "two"]) {
-    await claim(f.agent, key);
-    await fail(f.agent, key, error);
-  }
+  await failTwice(key);
   await claim(f.agent, key);
   await expire(key);
   const r = await claim(other, key);
@@ -235,4 +255,113 @@ test("Done when: an issue without criteria completes as before; a triage run nee
   await claim(f.agent, triaged, { stage: "verify" });
   assert.equal((await complete(f.agent, triaged)).status, 400, "verify proves, as work does");
   assert.equal((await commentsStarting(triaged, "Completed the")).length + (await commentsStarting(plain, "Completed the")).length, 0);
+});
+
+test("fail, fail, done, fail stops the loop: the agent cannot reset the cap by saying done", async () => {
+  const key = await newIssue("Done does not reset");
+  await failTwice(key);
+  await claim(f.agent, key);
+  await complete(f.agent, key);
+  await claim(f.agent, key);
+  const r = await fail(f.agent, key, "three");
+  assert.equal(r.body.stop?.reason, "3 failed attempts", JSON.stringify(r.body));
+});
+
+test("the same error with a done between still stops the loop", async () => {
+  const key = await newIssue("Same error around a done");
+  await claim(f.agent, key);
+  await fail(f.agent, key, "tests failed in a.ts");
+  await claim(f.agent, key);
+  await complete(f.agent, key);
+  await claim(f.agent, key);
+  assert.equal((await fail(f.agent, key, "tests failed in a.ts")).body.stop?.reason, "the same error twice in a row");
+});
+
+test("attempts older than a day do not count", async () => {
+  const key = await newIssue("Came back later");
+  await failTwice(key);
+  const old = await db.select({ id: schema.run.id }).from(schema.run).innerJoin(schema.issue, eq(schema.issue.id, schema.run.issueId)).where(and(eq(schema.issue.workspaceId, f.ws.workspaceId), eq(schema.issue.title, "Came back later")));
+  for (const { id } of old) await db.update(schema.run).set({ createdAt: dsql`now() - interval '25 hours'` }).where(eq(schema.run.id, id));
+  const next = await claim(f.agent, key);
+  assert.equal(next.body.run!.attempt, 1);
+  assert.equal((await fail(f.agent, key, "three")).body.stop, undefined);
+});
+
+test("a stop made by a person whose claim found the lapsed lease is not read as the reset", async () => {
+  const key = await newIssue("Stopped by a person's claim");
+  await failTwice(key);
+  await claim(f.agent, key);
+  await expire(key);
+  const r = await claim(f.owner, key);
+  assert.deepEqual([r.status, r.body.error, r.body.stop?.moved], [409, "stopped", true], JSON.stringify(r.body));
+  assert.equal(await stateOf(key), "In Review", "the person's own move to review, in the stop's transaction");
+  for (const as of [f.owner, f.agent, other]) assert.equal((await claim(as, key)).status, 409, "still stopped");
+  assert.equal((await call(f.owner, "PATCH", `/issues/${key}`, { state: "Backlog" })).status, 200);
+  assert.equal((await claim(f.agent, key)).status, 201, "a person's own change after it resets");
+});
+
+test("a refused move to review still leaves the comment of what was tried, saying the issue stays", async () => {
+  const key = await newIssue("Review is for people");
+  const review = await db.select({ id: schema.workflowState.id }).from(schema.workflowState).innerJoin(schema.project, eq(schema.project.id, schema.workflowState.projectId)).where(and(eq(schema.project.workspaceId, f.ws.workspaceId), eq(schema.project.key, "CORE"), eq(schema.workflowState.name, "In Review")));
+  await db.update(schema.workflowState).set({ onlyPeople: true }).where(eq(schema.workflowState.id, review[0]!.id));
+  try {
+    await claim(f.agent, key);
+    await fail(f.agent, key, "same");
+    await claim(f.agent, key);
+    const r = await fail(f.agent, key, "same");
+    assert.deepEqual([r.body.stop?.moved, r.body.stop?.written], [false, true], JSON.stringify(r.body));
+    assert.match(r.body.stop!.refused!, /people set this state/);
+    assert.notEqual(await stateOf(key), "In Review");
+    const [comment] = await stopComments(key);
+    assert.match(comment!.body, /The move to review was refused \(.*\), so the issue stays where it is/);
+  } finally {
+    await db.update(schema.workflowState).set({ onlyPeople: false }).where(eq(schema.workflowState.id, review[0]!.id));
+  }
+});
+
+test("archived issues take no claim or renew", async () => {
+  const key = await newIssue("Archived on the way");
+  await claim(f.agent, key);
+  assert.equal((await call(f.owner, "PATCH", `/issues/${key}`, { state: "Done", archived: true })).status, 200);
+  const renew = await call(f.agent, "POST", runs(key, "/renew"), {});
+  assert.deepEqual([renew.status, renew.body.error], [400, "archived"]);
+  assert.equal((await complete(f.agent, key)).status, 200, "its run can still end");
+  const claimed = await claim(f.agent, key);
+  assert.deepEqual([claimed.status, claimed.body.error], [400, "archived"]);
+});
+
+test("the error is kept and shown to 500 characters", async () => {
+  const key = await newIssue("Long error");
+  await claim(f.agent, key);
+  const r = await fail(f.agent, key, `${"e".repeat(600)}`);
+  assert.equal(r.body.run!.error!.length, 500);
+});
+
+test("volume: criteria past 50 are refused on complete and cut in the list; evidence must fit one comment; the list is 50 runs", async () => {
+  const many = Array.from({ length: 51 }, (_, i) => `- criterion ${i + 1}`).join("\n");
+  const key = await newIssue("Too many criteria", { description: `## Done when\n\n${many}` });
+  const listed = (await call(f.agent, "GET", runs(key))).body;
+  assert.deepEqual([(listed.criteria as string[]).length, listed.moreCriteria], [50, 1]);
+  await claim(f.agent, key);
+  const r = await complete(f.agent, key, { evidence: Array.from({ length: 50 }, () => "ok") });
+  assert.equal(r.status, 400);
+  assert.match(r.body.message!, /51 criteria, more than 50/);
+
+  const long = await newIssue("Long evidence", { description: "## Done when\n\n- a\n- b\n- c\n- d" });
+  await claim(f.agent, long);
+  const big = await complete(f.agent, long, { evidence: Array.from({ length: 4 }, () => "x".repeat(2000)), note: "y".repeat(2000) });
+  assert.equal(big.status, 200, "4 × 2000 characters fit");
+  const huge = await newIssue("Huge evidence", { description: `## Done when\n\n${Array.from({ length: 40 }, (_, i) => `- c${i}`).join("\n")}` });
+  await claim(f.agent, huge);
+  const over = await complete(f.agent, huge, { evidence: Array.from({ length: 40 }, () => "z".repeat(2000)) });
+  assert.equal(over.status, 400, JSON.stringify(over.body).slice(0, 200));
+  assert.match(over.body.message!, /over 65536; shorten it/);
+  assert.equal(((await call(f.agent, "GET", runs(huge))).body.runs as Run[])[0]!.outcome, null, "the run stays open");
+
+  const busy = await newIssue("Many runs");
+  const issueId = (await db.select({ id: schema.issue.id }).from(schema.issue).where(and(eq(schema.issue.workspaceId, f.ws.workspaceId), eq(schema.issue.title, "Many runs"))))[0]!.id;
+  const lease = new Date().toISOString();
+  await db.insert(schema.run).values(Array.from({ length: 52 }, (_, i) => ({ workspaceId: f.ws.workspaceId, issueId, agentId: f.ws.agentId, stage: "triage" as const, attempt: i + 1, leaseUntil: lease, outcome: "done" as const })));
+  const page = (await call(f.agent, "GET", runs(busy))).body;
+  assert.deepEqual([(page.runs as Run[]).length, page.more], [50, true]);
 });

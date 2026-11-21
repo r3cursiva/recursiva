@@ -514,19 +514,22 @@ const numbered = (items: readonly string[], s: Style, indent = "") => items.map(
  * An issue's runs, newest first: attempt, stage, outcome, agent, when, then the note or the error's first line; under a
  * done run with evidence, each criterion with it.
  */
-export function runList(runs: readonly RunRow[], s: Style = PLAIN): string {
+export function runList(runs: readonly RunRow[], s: Style = PLAIN, more = false): string {
   if (!runs.length) return s.gray("no runs");
   const rows = lines(
     runs.map((r) => [`#${r.attempt}`, r.stage, runState(r), r.agent ?? "?", minute(r.endedAt ?? r.leaseUntil, s), r.note ?? r.error?.split("\n")[0] ?? ""]),
     s,
     [s.gray, undefined, (cell) => word(s, OUTCOME, cell), undefined, s.gray],
   );
-  return rows.flatMap((row, i) => [row, ...numbered((runs[i]!.evidence ?? []).map((p) => `${p.criterion} — ${p.evidence}`), s, "    ")]).join("\n");
+  const out = rows.flatMap((row, i) => [row, ...numbered((runs[i]!.evidence ?? []).map((p) => `${p.criterion} — ${p.evidence}`), s, "    ")]);
+  return [...out, ...(more ? [s.gray(`the newest ${runs.length}; older runs are not listed`)] : [])].join("\n");
 }
 
 /** An issue's Done when criteria, numbered; none said so. */
-export const criteriaList = (criteria: readonly string[], s: Style = PLAIN): string =>
-  criteria.length ? numbered(criteria, s).join("\n") : s.gray("no Done when list: complete needs no evidence");
+export const criteriaList = (criteria: readonly string[], s: Style = PLAIN, more = 0): string =>
+  criteria.length
+    ? [...numbered(criteria, s), ...(more ? [s.gray(`and ${more} more: complete refuses a list this long; shorten it`)] : [])].join("\n")
+    : s.gray("no Done when list: complete needs no evidence");
 
 /** The workspace and whose token this is: a person's or the agent's, its role and scope, what it may change, and what members may beyond issues. */
 export function workspaceCard(w: WorkspaceInfo, s: Style = PLAIN): string {

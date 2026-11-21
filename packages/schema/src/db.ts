@@ -377,8 +377,13 @@ export const run = pgTable(
     errorFingerprint: text(),
     /** A done run of a stage with criteria: each "Done when" criterion as it read then, with the run's evidence for it. */
     evidence: jsonb().$type<{ criterion: string; evidence: string }[]>(),
-    /** A stopped run: the log number its move to review and comment were written at; a person's change of state after it resets the loop. */
+    /**
+     * A stopped run: the log's number when it stopped, and the id of the transaction its move to review goes in. A
+     * person's change of state after the number, in any other transaction, resets the loop: the stop's own move never
+     * does, whoever made it and however long its write took.
+     */
     stopSyncId: bigint({ mode: "number" }),
+    stopTxId: uuid(),
     createdAt: ts().notNull().defaultNow(),
     endedAt: ts(),
   },

@@ -165,6 +165,19 @@ test("what is the issue's own goes with it; the others let go of it, each a chan
   assert.ok((await db.select().from(syncAction).where(eq(syncAction.modelId, gone))).some((a) => a.action === "I"));
 });
 
+test("an issue with agent runs, one of them open, is deleted for good with its runs (RSVA-636)", async () => {
+  const gone = await newIssue();
+  const lease = new Date(Date.now() + 3600_000).toISOString();
+  await db.insert(schema.run).values([
+    { workspaceId: ws.workspaceId, issueId: gone, agentId: ws.agentId, stage: "work", attempt: 1, leaseUntil: lease, outcome: "failed", error: "x" },
+    { workspaceId: ws.workspaceId, issueId: gone, agentId: ws.agentId, stage: "work", attempt: 2, leaseUntil: lease },
+  ]);
+  await update(gone, { deletedAt: now() });
+  await purge(gone);
+  assert.equal(await found(gone), undefined);
+  assert.deepEqual(await db.select().from(schema.run).where(eq(schema.run.issueId, gone)), []);
+});
+
 test("the log forgets the issue's words: title, comments, links, GitHub links and description, in every earlier action (RSVA-609)", async () => {
   const secret = (what: string) => `secret-${what}-${randomUUID()}`;
   const words = { pull: secret("pull"), branch: secret("branch"), commit: secret("commit"), other: secret("other"), title: secret("title"), renamed: secret("renamed"), comment: secret("comment"), edited: secret("edited"), link: secret("link"), linkUrl: `https://example.com/${secret("url")}`, linkTitle: secret("link-title"), removed: secret("removed"), doc: secret("doc"), doc2: secret("doc2") };
