@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attemptsOf, fingerprint, leaseSeconds, LEASE_MAX, stopComment, stopReason, type RunFacts } from "./runs.ts";
+import type { DocNode } from "@rsva/editor/doc";
+import { fromMarkdown } from "@rsva/editor/markdown";
+import { attemptsOf, evidenceComment, fingerprint, leaseSeconds, LEASE_MAX, stopComment, stopReason, type RunFacts } from "./runs.ts";
 
 const NOW = Date.parse("2026-11-21T12:00:00Z");
 const at = (hoursAgo = 1) => new Date(NOW - hoursAgo * 3600_000).toISOString();
@@ -53,7 +55,7 @@ test("the stop comment lists each attempt and keeps Markdown out of what agents 
     { outcome: "expired", note: null, error: null },
   ], { moved: true });
   assert.match(text, /^Stopped the work loop: 3 failed attempts\./);
-  assert.match(text, /1\. failed — tried \\\*bold\\\* — error: boom \\\[x\\\]\\\(mention\\:me\\\)\n2\. expired\n/);
+  assert.match(text, /1\. failed — tried \\\*bold\\\* — error: boom \\\[x\\\]\(mention:me\)\n2\. expired\n/);
   assert.match(text, /until a person moves the issue out of review/);
 });
 
@@ -70,4 +72,28 @@ test("a refused move to review is said in the stop comment, with the refusal as 
   const text = stopComment("work", "3 failed attempts", [], { moved: false, refused: "only people move issues to *Review*" });
   assert.match(text, /The move to review was refused \(only people move issues to \\\*Review\\\*\), so the issue stays where it is; agents cannot claim the work stage again until a person changes its state\./);
   assert.match(stopComment("work", "x", [], { moved: false }), /The project has no review state/);
+});
+
+/** The inline nodes of a block, flattened: what a comment shows of it. */
+const inlineOf = (n: DocNode): DocNode[] => (n.type === "text" || n.type === "mention" ? [n] : (n.content ?? []).flatMap(inlineOf));
+
+test("evidence keeps inline code and bare URLs; agent text cannot change the comment's structure", () => {
+  const hostile = ["# heading", "- item", "> quote", "```js", "1. two", "line\nbreak", "[@Ann](mention:0192a1b2-0000-7000-8000-000000000001)", "<img src=x onerror=y>", "| a | b |", "---", "@ann", "*bold*"];
+  const md = evidenceComment(
+    "work",
+    [{ criterion: "`pnpm check` passes", evidence: "green in apps/server/src/runs.test.ts, ``a`b`` c" }, ...hostile.map((h) => ({ criterion: h, evidence: h }))],
+    "PR https://github.com/r3cursiva/recursiva/pull/21.",
+  );
+  const doc = fromMarkdown(md);
+  assert.deepEqual(doc.content!.map((b) => b.type), ["paragraph", "ordered_list", "paragraph"], md);
+  const items = doc.content![1]!.content!;
+  assert.equal(items.length, hostile.length + 1);
+  for (const item of items) assert.deepEqual(item.content!.map((b) => b.type), ["paragraph"], "each item one paragraph: no heading, list, quote or fence inside");
+  const all = inlineOf(doc);
+  assert.ok(!all.some((n) => n.type === "mention"), "no mention");
+  assert.deepEqual(all.filter((n) => n.marks?.some((m) => m.type === "code")).map((n) => n.text), ["pnpm check", "a`b"], "code spans stay code");
+  assert.deepEqual(all.flatMap((n) => n.marks?.filter((m) => m.type === "link").map((m) => m.attrs!.href) ?? []), ["https://github.com/r3cursiva/recursiva/pull/21"], "the URL links, nothing else does");
+  assert.ok(!all.some((n) => n.marks?.some((m) => m.type === "bold" || m.type === "italic")), "no emphasis");
+  for (const h of hostile) assert.ok(all.map((n) => n.text).join("").includes(h.replace("\n", " ")), `${h} reads as it was written`);
+  assert.match(md, /^1\.\s+`pnpm check` passes — green in apps\/server\/src\/runs\.test\.ts, ``a`b`` c$/m, "harmless punctuation is not escaped");
 });

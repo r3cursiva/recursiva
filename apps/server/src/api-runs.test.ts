@@ -236,8 +236,8 @@ test("Done when: complete on work needs evidence for each criterion, in order; r
   assert.equal(comment!.author, agentEmail);
   assert.equal(
     comment!.body,
-    "Completed the work stage. Done when, with evidence:\n\n1. \\`pnpm check\\` passes — CI run 12 \\*green\\*\n2. a test fails without it — \\[\\@Ann\\]\\(mention\\:me\\) see apps\\/server\\/src\\/x\\.test\\.ts\n\nPR \\#3",
-    "each criterion with its evidence, as plain text: no mention or emphasis it could carry",
+    "Completed the work stage. Done when, with evidence:\n\n1. `pnpm check` passes — CI run 12 \\*green\\*\n2. a test fails without it — \\[@Ann\\](mention:me) see apps/server/src/x.test.ts\n\nPR #3",
+    "each criterion with its evidence and its inline code: no mention or emphasis it could carry",
   );
 });
 

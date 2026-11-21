@@ -9,8 +9,9 @@
 // hand on a person's reset and would be one more thing two writers race on; a stop marker on the issue would put
 // server-only state in the synced row. The rows already say everything, and a stage has a handful of them.
 import { createHash } from "node:crypto";
+import type { DocNode } from "@rsva/editor/doc";
+import { toMarkdown, urlSpans } from "@rsva/editor/markdown";
 import type { RunOutcome } from "@rsva/schema/models";
-import { MARKDOWN_PUNCTUATION } from "./http.ts";
 
 /** A lease in seconds: an hour when none is asked; asked ones are held between a minute and six hours. Renew extends. */
 const LEASE_DEFAULT = 3600;
@@ -88,19 +89,68 @@ export interface Tried {
   error: string | null;
 }
 
-/** Text from a run as plain Markdown text: no link, mention or emphasis it could carry. */
-const literal = (s: string) => s.replace(MARKDOWN_PUNCTUATION, "\\$&");
+const text = (t: string): DocNode => ({ type: "text", text: t });
+const paragraph = (content: DocNode[]): DocNode => ({ type: "paragraph", content });
+const list = (items: DocNode[][]): DocNode => ({ type: "ordered_list", content: items.map((c) => ({ type: "list_item", content: [paragraph(c)] })) });
+/** A comment as Markdown, written by the editor's serializer: it escapes what text must not start, and nothing else. */
+const comment = (blocks: DocNode[]) => toMarkdown({ type: "doc", content: blocks }).trimEnd();
 
-/** A run's own text on one line, as plain Markdown text. */
-const line = (s: string) => literal(s.replace(/\s+/g, " ").trim());
+/**
+ * A run's own text on one line, as inline content: its code spans (a run of backticks up to the next run as long) stay
+ * code and its bare URLs links; everything else is text, which the serializer escapes, so no heading, list, quote,
+ * fence, emphasis, link or mention of it reaches the comment. Each backtick run's partner is found from the end once,
+ * so hostile input stays linear.
+ */
+function inline(s: string): DocNode[] {
+  const t = s.replace(/\s+/g, " ").trim();
+  const runs = [...t.matchAll(/`+/g)].map((m) => ({ at: m.index, len: m[0].length }));
+  const partner: (number | undefined)[] = [];
+  const nextOfLength = new Map<number, number>();
+  for (let i = runs.length - 1; i >= 0; i--) {
+    partner[i] = nextOfLength.get(runs[i]!.len);
+    nextOfLength.set(runs[i]!.len, i);
+  }
+  const out: DocNode[] = [];
+  let from = 0;
+  /** The text from `from` up to `to`, its bare URLs linked. */
+  const plain = (to: number) => {
+    const seg = t.slice(from, to);
+    let at = 0;
+    for (const u of urlSpans(seg)) {
+      if (u.from > at) out.push(text(seg.slice(at, u.from)));
+      out.push({ type: "text", text: seg.slice(u.from, u.to), marks: [{ type: "link", attrs: { href: u.href } }] });
+      at = u.to;
+    }
+    if (at < seg.length) out.push(text(seg.slice(at)));
+  };
+  for (let i = 0; i < runs.length; i++) {
+    const j = partner[i];
+    if (j === undefined) continue;
+    const open = runs[i]!;
+    let code = t.slice(open.at + open.len, runs[j]!.at);
+    if (/^ .* $/.test(code) && code.trim()) code = code.slice(1, -1);
+    if (code) {
+      plain(open.at);
+      out.push({ type: "text", text: code, marks: [{ type: "code" }] });
+      from = runs[j]!.at + open.len;
+    }
+    i = j;
+  }
+  plain(t.length);
+  return out;
+}
 
 /**
  * The comment a done run with criteria leaves on the issue: each "Done when" criterion with the run's evidence for it,
- * and the run's note. All of it as plain text: a criterion's own Markdown (a mention, a link) is quoted, not repeated.
+ * and the run's note. Each on its own line, as text with its inline code and bare URLs: a criterion's other Markdown (a
+ * mention, a heading) is quoted, not repeated.
  */
 export function evidenceComment(stage: string, proof: readonly { criterion: string; evidence: string }[], note: string | null): string {
-  const lines = proof.map((p, i) => `${i + 1}. ${line(p.criterion)} — ${line(p.evidence)}`);
-  return [`Completed the ${stage} stage. Done when, with evidence:`, "", ...lines, ...(note ? ["", line(note)] : [])].join("\n");
+  return comment([
+    paragraph([text(`Completed the ${stage} stage. Done when, with evidence:`)]),
+    list(proof.map((p) => [...inline(p.criterion), text(" — "), ...inline(p.evidence)])),
+    ...(note ? [paragraph(inline(note))] : []),
+  ]);
 }
 
 /**
@@ -111,14 +161,16 @@ export type StopMove = { moved: true } | { moved: false; refused?: string };
 
 /** The comment a stop leaves on the issue: why, each attempt (outcome, note, the error's first line), and what resets it. */
 export function stopComment(stage: string, reason: string, tried: readonly Tried[], move: StopMove): string {
-  const lines = tried.map((t, i) => {
-    const firstLine = t.error?.split("\n").find((l) => l.trim())?.trim().slice(0, 200);
-    const parts = [t.outcome, t.note && line(t.note), firstLine && `error: ${literal(firstLine)}`].filter(Boolean);
-    return `${i + 1}. ${parts.join(" — ")}`;
+  const items = tried.map((t) => {
+    const firstLine = t.error?.split("\n").find((l) => l.trim());
+    const parts = [[text(t.outcome)], t.note ? inline(t.note) : [], firstLine ? [text("error: "), ...inline(firstLine.trim().slice(0, 200))] : []].filter((p) => p.length);
+    return parts.flatMap((p, i) => (i ? [text(" — "), ...p] : p));
   });
-  const stays = move.moved ? "" : move.refused ? `The move to review was refused (${literal(move.refused)}), so the issue stays where it is` : "The project has no review state, so the issue stays where it is";
+  const claimAgain = `agents cannot claim the ${stage} stage again until a person changes its state.`;
   const next = move.moved
-    ? `Agents cannot claim the ${stage} stage again until a person moves the issue out of review.`
-    : `${stays}; agents cannot claim the ${stage} stage again until a person changes its state.`;
-  return [`Stopped the ${stage} loop: ${reason}.`, "", "Tried:", "", ...lines, "", next].join("\n");
+    ? [text(`Agents cannot claim the ${stage} stage again until a person moves the issue out of review.`)]
+    : move.refused
+      ? [text("The move to review was refused ("), ...inline(move.refused), text(`), so the issue stays where it is; ${claimAgain}`)]
+      : [text(`The project has no review state, so the issue stays where it is; ${claimAgain}`)];
+  return comment([paragraph([text(`Stopped the ${stage} loop: ${reason}.`)]), paragraph([text("Tried:")]), list(items), paragraph(next)]);
 }
