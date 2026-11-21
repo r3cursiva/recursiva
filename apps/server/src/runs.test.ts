@@ -57,12 +57,12 @@ test("the stop comment lists each attempt and keeps Markdown out of what agents 
   assert.match(text, /until a person moves the issue out of review/);
 });
 
-test("a fingerprint takes linear time on a hostile line, and reads 500 characters of it at most", () => {
-  const hostile = `${"a/".repeat(1000)}${"0".repeat(1000)}g`;
+test("a fingerprint takes linear time on hostile lines, and reads 500 characters of one at most", () => {
+  // Each of these 4000-character lines took the old patterns about 10 ms (quadratic backtracking); ten of them, 100 ms.
+  const hostile = ["a", "~", "0", "-"].flatMap((c) => [c.repeat(4000), `${c.repeat(3999)} `]).concat(["a/".repeat(2000), `${"-".repeat(2000)}${"a".repeat(2000)}`]);
   const t0 = performance.now();
-  fingerprint(hostile);
-  fingerprint(`${"-".repeat(2000)}${"a".repeat(2000)}`);
-  assert.ok(performance.now() - t0 < 50, `took ${performance.now() - t0} ms`);
+  for (const line of hostile) fingerprint(line);
+  assert.ok(performance.now() - t0 < 20, `took ${performance.now() - t0} ms`);
   assert.equal(fingerprint(`${"x".repeat(500)}tail one`), fingerprint(`${"x".repeat(500)}tail two`));
 });
 
