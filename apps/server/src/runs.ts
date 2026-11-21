@@ -10,7 +10,7 @@
 // server-only state in the synced row. The rows already say everything, and a stage has a handful of them.
 import { createHash } from "node:crypto";
 import type { DocNode } from "@rsva/editor/doc";
-import { toMarkdown, urlSpans } from "@rsva/editor/markdown";
+import { codeSpans, codeText, toMarkdown, urlSpans } from "@rsva/editor/markdown";
 import type { RunOutcome } from "@rsva/schema/models";
 
 /** A lease in seconds: an hour when none is asked; asked ones are held between a minute and six hours. Renew extends. */
@@ -101,20 +101,12 @@ const list = (items: DocNode[][]): DocNode => ({ type: "ordered_list", content: 
 const comment = (blocks: DocNode[]) => toMarkdown({ type: "doc", content: blocks }).trimEnd();
 
 /**
- * A run's own text on one line, as inline content: its code spans (a run of backticks up to the next run as long) stay
- * code and its bare URLs links; everything else is text, which the serializer escapes, so no heading, list, quote,
- * fence, emphasis, link or mention of it reaches the comment. Each backtick run's partner is found from the end once,
- * so hostile input stays linear.
+ * A run's own text on one line, as inline content: its code spans (paired as the Markdown parser pairs them, codeSpans)
+ * stay code and its bare URLs links; everything else is text, which the serializer escapes, so no heading, list, quote,
+ * fence, emphasis, link or mention of it reaches the comment.
  */
 function inline(s: string): DocNode[] {
   const t = s.replace(/\s+/g, " ").trim();
-  const runs = [...t.matchAll(/`+/g)].map((m) => ({ at: m.index, len: m[0].length }));
-  const partner: (number | undefined)[] = [];
-  const nextOfLength = new Map<number, number>();
-  for (let i = runs.length - 1; i >= 0; i--) {
-    partner[i] = nextOfLength.get(runs[i]!.len);
-    nextOfLength.set(runs[i]!.len, i);
-  }
   const out: DocNode[] = [];
   let from = 0;
   /** The text from `from` up to `to`, its bare URLs linked. */
@@ -128,18 +120,12 @@ function inline(s: string): DocNode[] {
     }
     if (at < seg.length) out.push(text(seg.slice(at)));
   };
-  for (let i = 0; i < runs.length; i++) {
-    const j = partner[i];
-    if (j === undefined) continue;
-    const open = runs[i]!;
-    let code = t.slice(open.at + open.len, runs[j]!.at);
-    if (/^ .* $/.test(code) && code.trim()) code = code.slice(1, -1);
-    if (code) {
-      plain(open.at);
-      out.push({ type: "text", text: code, marks: [{ type: "code" }] });
-      from = runs[j]!.at + open.len;
-    }
-    i = j;
+  for (const r of codeSpans(t)) {
+    const code = r.end < 0 ? "" : codeText(t.slice(r.at + r.ticks, r.end));
+    if (!code) continue;
+    plain(r.at);
+    out.push({ type: "text", text: code, marks: [{ type: "code" }] });
+    from = r.end + r.ticks;
   }
   plain(t.length);
   return out;

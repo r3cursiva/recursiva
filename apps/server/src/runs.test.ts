@@ -110,3 +110,11 @@ test("the environment's failures do not count as the agent's, and stop the loop 
   assert.ok(stopReason([failed("a"), failed("b"), blocked(), blocked(), blocked()]));
   assert.ok(stopReason([blocked(), blocked(), failed("a"), failed("b"), failed("c")]));
 });
+
+test("code spans in agent text pair as the Markdown parser pairs them, an escaped backtick included", () => {
+  const codes = (n: DocNode) => inlineOf(n).filter((x) => x.marks?.some((m) => m.type === "code")).map((x) => x.text);
+  for (const s of ["say \\`a` and `b`", "``a`b`` c", "`a`` b` `c`", "\\``x``"]) {
+    const md = evidenceComment("work", [{ criterion: "c", evidence: s }], null);
+    assert.deepEqual(codes(fromMarkdown(md)), codes(fromMarkdown(s)), s);
+  }
+});

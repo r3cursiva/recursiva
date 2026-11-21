@@ -369,7 +369,19 @@ interface Scan {
   bracket: Map<number, number>;
 }
 
-function scan(src: string): Scan {
+/** A backtick run of a textblock's source: where it starts, how many backticks, and where its closing run starts (-1: none, it is text). */
+export interface CodeRun {
+  at: number;
+  ticks: number;
+  end: number;
+}
+
+/**
+ * The backtick runs of a textblock's source as code spans pair them, in reading order: a run closes on the next run of
+ * exactly its length, and a backslash escapes the character after it outside code spans only (inside one it is text).
+ * Linear: each length's runs are walked once. The parser's scan uses it; so does text built from an agent's (runs.ts).
+ */
+export function codeSpans(src: string): CodeRun[] {
   // Maximal backtick runs by length: a code span closes on the next run of exactly its opener's length.
   const runs = new Map<number, number[]>();
   for (let i = 0; i < src.length; i++) {
@@ -389,11 +401,8 @@ function scan(src: string): Scan {
     cursor.set(len, k);
     return k < list.length ? list[k]! : -1;
   };
-  // One pass in reading order: escapes apply outside code spans only (a backslash inside one is text), and brackets
-  // inside code spans do not count.
-  const codeEnd = new Map<number, number>();
-  const bracket = new Map<number, number>();
-  const stack: number[] = [];
+  // One pass in reading order: escapes apply outside code spans only (a backslash inside one is text).
+  const out: CodeRun[] = [];
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (c === "\\") i++;
@@ -401,9 +410,36 @@ function scan(src: string): Scan {
       let j = i;
       while (src[j] === "`") j++;
       const end = nextRun(j - i, j);
-      codeEnd.set(i, end);
+      out.push({ at: i, ticks: j - i, end });
       i = (end >= 0 ? end + (j - i) : j) - 1;
-    } else if (c === "[") stack.push(i);
+    }
+  }
+  return out;
+}
+
+/** A code span's text as it reads: line ends as spaces, and one space off each end when both have one and it is not all spaces. */
+export function codeText(raw: string): string {
+  const code = raw.replace(/\n/g, " ");
+  return /^ .* $/.test(code) && code.trim() ? code.slice(1, -1) : code;
+}
+
+function scan(src: string): Scan {
+  const spans = codeSpans(src);
+  const codeEnd = new Map(spans.map((r) => [r.at, r.end]));
+  // The same walk as codeSpans', skipping its runs: brackets inside code spans, or escaped, do not count.
+  const bracket = new Map<number, number>();
+  const stack: number[] = [];
+  let next = 0;
+  for (let i = 0; i < src.length; i++) {
+    const r = spans[next];
+    if (r?.at === i) {
+      next++;
+      i = (r.end >= 0 ? r.end : r.at) + r.ticks - 1;
+      continue;
+    }
+    const c = src[i];
+    if (c === "\\") i++;
+    else if (c === "[") stack.push(i);
     else if (c === "]" && stack.length) bracket.set(stack.pop()!, i);
   }
   return { codeEnd, bracket };
@@ -484,9 +520,7 @@ function tokens(src: string, sc: Scan, from: number, to: number, depth: number, 
         continue;
       }
       flush();
-      let code = src.slice(j, end).replace(/\n/g, " ");
-      if (/^ .* $/.test(code) && code.trim()) code = code.slice(1, -1);
-      toks.push({ k: "code", s: code });
+      toks.push({ k: "code", s: codeText(src.slice(j, end)) });
       i = end + (j - i);
     } else if (c === "&") {
       const m = /^&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,6});/i.exec(src.slice(i, Math.min(to, i + 10)));
