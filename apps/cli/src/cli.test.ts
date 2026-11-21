@@ -996,6 +996,8 @@ probe() { words=("$@"); CURRENT=$#; PREFIX=$words[CURRENT]; IPREFIX=; _rsva; pri
     [["issues", "-p", "PLNR", "st"], `|${keys}`],
     [["cycle", ""], "describe|show create update complete delete"],
     [["cycle", "complete", "C1", "--move-to", ""], "|next none"],
+    // A state goes there, and Tab asks nothing of the server: nothing to offer (RSVA-241).
+    [["state", "delete", "Done", "--move-to", ""], ""],
     [["label", ""], "describe|create update delete"],
     [["state", "create", "Review", "--group", ""], "|backlog unstarted started completed cancelled"],
     [["cycle", "show", "--"], "|--project -p --help -h --plain --color --json"],

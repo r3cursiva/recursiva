@@ -106,7 +106,8 @@ const FLAGS = {
   due: {},
   description: { short: "d" },
   lead: {},
-  "move-to": { values: MOVE_WORDS },
+  // Its words differ by command (a cycle for `cycle complete`, a state for `state delete`): each command names its own.
+  "move-to": {},
   keep: { multiple: true },
   all: { boolean: true },
   until: {},
@@ -151,6 +152,8 @@ interface Command {
   json?: false;
   /** What Tab offers for each argument, by position. */
   complete?: readonly (readonly string[] | undefined)[];
+  /** What Tab offers after a flag whose fixed values are this command's own, ahead of the flag's values in FLAGS. */
+  completeFlags?: Partial<Record<Flag, readonly string[]>>;
   run(c: Ctx): Promise<string>;
 }
 
@@ -517,6 +520,7 @@ const cycleCommands: Record<string, Command> = {
     args: "<cycle>",
     flags: "--move-to <cycle|next|none> [--keep KEY]... [-p KEY]",
     about: "complete it and move its open issues on; --keep leaves an issue in the completed cycle",
+    completeFlags: { "move-to": MOVE_WORDS },
     async run(c) {
       if (c.v["move-to"] === undefined) throw new UsageError("where do the open issues go? --move-to <cycle|next|none>");
       const r = await c.api.request<{ moved: number; kept: number }>("POST", cyclePath(c, "/complete"), { query: inProject(c), body: given({ moveTo: clearable(c.v["move-to"]), keep: c.v.keep?.map((k) => k.toUpperCase()) }) });
@@ -801,8 +805,8 @@ const completion: Command = {
     if (c.args[0] !== "zsh") throw new UsageError("completion for zsh only, so far");
     const of = (name: string, cmd: Command | Group): Completable =>
       isGroup(cmd)
-        ? { name, about: cmd.about, flags: [], query: false, values: [] }
-        : { name, about: cmd.about, flags: [...flagsOf(cmd), ...globalsOf(cmd)], query: cmd.args.includes("query"), values: cmd.complete ?? [] };
+        ? { name, about: cmd.about, flags: [], query: false, values: [], flagValues: {} }
+        : { name, about: cmd.about, flags: [...flagsOf(cmd), ...globalsOf(cmd)], query: cmd.args.includes("query"), values: cmd.complete ?? [], flagValues: cmd.completeFlags ?? {} };
     const flagSpecs = Object.entries(FLAGS) as [Flag, FlagSpec][];
     return zsh({
       commands: Object.entries(COMMANDS).map(([n, cmd]) => of(n, cmd)),
