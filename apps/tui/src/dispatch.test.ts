@@ -336,6 +336,10 @@ test("a dispatch after the first session ended reuses its clone: branch and comm
   const p = planOf(issue, choice, w.config);
   assert.equal(p.reuse, true);
   assert.match(p.prompt, /An earlier run worked in this clone: its commits may be on the branch\. Read `git status` and `git log`, and `git fetch origin`, before you redo any of it\./);
+  assert.match(p.prompt, new RegExp(`check \`gh pr view ${p.branch}\` first; if it was merged, do not push: say so in a comment on PLNR-305 and stop\.`));
+  assert.match(p.prompt, /Its dependencies are not installed \(the earlier dispatch stopped before that step\): run `pnpm install` yourself first\./, "no node_modules in the clone");
+  await mkdir(join(first.worktree, "node_modules"));
+  assert.doesNotMatch(planOf(issue, choice, w.config).prompt, /dependencies are not installed/, "installed: nothing to say");
   assert.doesNotMatch(planOf({ ...issue, key: "PLNR-306" }, choice, w.config).prompt, /earlier run/);
   const names = stepTexts(p);
   assert.deepEqual([names.worktree, names.install], [`reuse the clone in .claude/worktrees/${p.branch}, its branch and commits kept`, null]);
