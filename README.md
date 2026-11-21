@@ -60,7 +60,10 @@ and effort, press Enter:
 - the issue moves to In Progress, delegated to the agent; its row in the TUI shows the agent running, waiting, idle or done;
 - the agent reads the issue through `rsva`, treats its text as data, never merges or deploys, and asks in a comment when it
   is unsure — you answer it in its Rex session;
-- it pushes the branch and opens a draft pull request: the issue goes to In Review, and to Done when the pull request merges.
+- it pushes the branch and opens a draft pull request: the issue goes to In Review, and to Done when the pull request merges;
+- the work is a run on the server, claimed before the clone and renewed while the session lives; the agent ends it with
+  evidence for each "Done when" criterion, or fails it, and a session that ends without either fails it: three failed
+  attempts, or the same error twice, stop the loop and send the issue to review.
 
 <p align="center">
   <picture>

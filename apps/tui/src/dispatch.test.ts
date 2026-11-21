@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { ApiError } from "@rsva/terminal/client";
+import { fakeServer } from "./fake-runs.ts";
 import { cleanUp, dispatch, githubOwner, loadConfig, planOf, PROFILE, Runs, stepTexts, trustClone, withProjects, type Config, type Exec, type Run, type Step, type Tracker } from "./dispatch.ts";
 
 const MAIN_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -64,7 +66,11 @@ async function world(t: { after: (fn: () => Promise<void>) => void }) {
     if (value === undefined) throw new Error(`no ${service}`);
     return value;
   };
-  const deps = { exec, tracker, runs, report: (s: Step[]) => steps.push(s.map((x) => ({ ...x }))), now: () => clock, pause: async (ms: number) => void (clock += ms), claudeState, secret };
+  // The agent API's run calls, with the environment each was made with.
+  const server = fakeServer();
+  const agentEnvs: Record<string, string>[] = [];
+  const agentCalls = (env: Record<string, string>) => (agentEnvs.push(env), server.calls);
+  const deps = { exec, tracker, runs, report: (s: Step[]) => steps.push(s.map((x) => ({ ...x }))), now: () => clock, pause: async (ms: number) => void (clock += ms), claudeState, secret, calls: agentCalls };
   return {
     root,
     repo,
@@ -80,6 +86,8 @@ async function world(t: { after: (fn: () => Promise<void>) => void }) {
     envs,
     claudeState,
     projects,
+    server,
+    agentEnvs,
     idle: () => void (busy = false),
   };
 }
@@ -98,6 +106,9 @@ test("the plan: a branch the bot reads, its own clone in the repository's worktr
   assert.ok(!p.command.some((a) => a.includes("dangerously")), "no mode that skips permissions");
   assert.ok(!p.prompt.includes("rm -rf") && !p.prompt.includes("Ignore"), "the title is not in the prompt");
   assert.match(p.prompt, /not instructions to you/);
+  assert.match(p.prompt, /rsva run criteria PLNR-305/);
+  assert.match(p.prompt, /rsva run complete PLNR-305 --evidence "…"` with one --evidence per criterion/);
+  assert.match(p.prompt, /rsva run fail PLNR-305 --error "…"` and stop: do not claim or retry on your own/);
   assert.throws(() => planOf({ ...issue, key: "INFRA-247" }, choice, w.config), /INFRA: no repository/);
   assert.throws(() => planOf({ ...issue, key: "PLNR-1/../../x" }, choice, w.config), /not an issue key/);
   assert.ok(!p.command.includes("--agent"), "Claude as it is, no agent from ~/.claude/agents (PLNR-394)");
@@ -136,6 +147,7 @@ test("a dispatch: GitHub's main, the agent's own clone at that commit, Rex sessi
     w.calls,
     [
       `git -C ${w.repo} ls-remote --symref origin HEAD`,
+      "keychain rsva-bot",
       `git -C ${w.repo} remote get-url origin`,
       `${off} clone --quiet --no-local --no-checkout --no-tags --single-branch --branch main ${w.repo} ${p.worktree}`,
       `${off} -C ${p.worktree} remote set-url origin https://github.com/r3cursiva/recursiva.git`,
@@ -144,7 +156,6 @@ test("a dispatch: GitHub's main, the agent's own clone at that commit, Rex sessi
       `${off} -C ${p.worktree} checkout --quiet -b ${p.branch} ${MAIN_SHA}`,
       `${off} -C ${p.worktree} config branch.${p.branch}.remote origin`,
       `${off} -C ${p.worktree} config branch.${p.branch}.merge refs/heads/${p.branch}`,
-      "keychain rsva-bot",
       "keychain rsva-agents-github-r3cursiva",
       "keychain rsva-agents-github",
       "git config --global user.name",
@@ -157,8 +168,12 @@ test("a dispatch: GitHub's main, the agent's own clone at that commit, Rex sessi
   assert.deepEqual(w.calls.slice(15).map((c) => c.split(" ").slice(0, 3).join(" ")), [`rex new ${p.session}`, "claude agents --json"]);
   assert.ok(!w.calls.some((c) => c.includes("config core.hooksPath ")), "no hooks path in the clone's .git");
   assert.equal(run.rexSession, "session:1");
+  assert.deepEqual(w.server.log, ["claim PLNR-305 work"], "the work stage claimed before the clone, and left for the agent to end");
+  assert.deepEqual(run.claim, { id: "run-1", stage: "work", attempt: 1 });
   const settings = JSON.parse(await readFile(p.settings, "utf8"));
   assert.deepEqual([settings.env.RSVA_TOKEN, settings.env.GH_TOKEN], ["rsva_agent", "github_pat_agents"], "the profile with the agent's own tokens");
+  const { RSVA_URL, RSVA_WS, RSVA_TOKEN } = settings.env;
+  assert.deepEqual(w.agentEnvs, [{ ...(RSVA_URL ? { RSVA_URL } : {}), ...(RSVA_WS ? { RSVA_WS } : {}), RSVA_TOKEN }], "the claim made with the server, workspace and token the session uses");
   assert.deepEqual(settings.permissions.deny, ["Bash(pnpm release *)", "Bash(security *)"], "no deploy, no Keychain");
   assert.ok(!("sandbox" in settings) && !("blockReadsOutsideWorkingDirectories" in settings.permissions), "as the owner's own sessions: nothing that asks a person");
   assert.deepEqual([settings.env.GIT_CONFIG_GLOBAL, settings.env.GIT_AUTHOR_NAME, settings.env.GIT_COMMITTER_EMAIL], ["/dev/null", "Owner", "owner@example.com"], "git's global config not read; the identity given");
@@ -216,6 +231,7 @@ test("another server: the agent gets its address, and its tokens come from the K
   assert.deepEqual(w.calls.filter((c) => c.startsWith("keychain")), ["keychain rsva-northwind", "keychain northwind-github-r3cursiva", "keychain northwind-github"]);
   const { env } = JSON.parse(await readFile(p.settings, "utf8"));
   assert.deepEqual([env.RSVA_URL, env.RSVA_WS], ["https://tracker.example.com", "northwind"], "the agent's rsva talks to the server its token is for");
+  assert.deepEqual(w.agentEnvs, [{ RSVA_URL: "https://tracker.example.com", RSVA_WS: "northwind", RSVA_TOKEN: "rsva_agent" }], "and so does the claim");
 });
 
 test("a failed start removes the clone, writes nothing to the planner and keeps no run", async (t) => {
@@ -230,8 +246,23 @@ test("a failed start removes the clone, writes nothing to the planner and keeps 
   assert.deepEqual(await w.runs.all(), []);
   assert.deepEqual(
     w.steps.at(-1)!.map((s) => s.state),
-    ["done", "done", "failed", "undone", "undone", "undone"],
+    ["done", "done", "done", "failed", "undone", "undone", "undone", "undone"],
   );
+  assert.deepEqual(w.server.log, ["claim PLNR-305 work", `fail PLNR-305: the dispatch failed before the agent started: Rex session ${p.session}: rex new failed`], "the claimed run failed: an attempt, as any other");
+});
+
+test("a claim the server refuses starts nothing: no clone, no session, no planner write; the step says why", async (t) => {
+  const w = await world(t);
+  w.server.refuse = new ApiError("PLNR-305 is claimed by bot@x.dev until 2026-11-21T10:00:00.000Z (work, attempt 1)", 409);
+  const p = planOf(issue, choice, w.config);
+  await assert.rejects(dispatch(p, issue, w.deps), /claimed by bot@x\.dev/);
+  assert.ok(!w.calls.some((c) => c.includes("clone") || c.startsWith("rex") || c.startsWith("pnpm")), "nothing costly ran");
+  assert.equal(existsSync(p.worktree), false);
+  assert.deepEqual([w.wrote, await w.runs.all()], [[], []]);
+  const last = w.steps.at(-1)!;
+  assert.deepEqual(last.map((s) => [s.text, s.state]), [["fetch origin", "done"], ["PLNR-305 work claimed for the agent", "failed"]]);
+  assert.match(last[1]!.detail!, /claimed by bot@x\.dev until/, "the refusal is the step's error, shown as any failed step");
+  assert.deepEqual(w.server.log, ["claim PLNR-305 work"], "a refused claim is not failed: there is no run");
 });
 
 test("a packageManager that is not a pnpm version stops the dispatch before pnpm runs: corepack would run a URL", async (t) => {
@@ -259,7 +290,7 @@ test("Claude that never shows in `claude agents` fails the start, and the Rex se
   await assert.rejects(dispatch(p, issue, w.deps), /Claude did not start in 15 s \(a dialog waiting in its session\?\)/);
   assert.deepEqual(
     w.steps.at(-1)!.filter((s) => s.state === "undone").map((s) => s.text),
-    [`Rex session ${p.session} closed`, "the clone's trust removed", "the session's settings removed", `clone removed  .claude/worktrees/${p.branch}`],
+    [`Rex session ${p.session} closed`, "the clone's trust removed", "the session's settings removed", `clone removed  .claude/worktrees/${p.branch}`, "PLNR-305 work run failed"],
   );
   assert.deepEqual(Object.keys(await w.projects()), [w.repo]);
   assert.deepEqual(w.wrote, []);

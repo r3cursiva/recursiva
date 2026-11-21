@@ -445,7 +445,7 @@ export class Flow {
   /** The launch log from the steps reported so far and the ones still to come. */
   private launchSteps(d: Dispatching): { steps: LaunchStep[]; undone: { text: string; ms: number }[] } {
     const names = stepTexts(d.plan!);
-    const planned = [names.fetch, names.worktree, ...(names.install ? [names.install] : []), names.rex, names.started, names.start];
+    const planned = [names.fetch, names.claim, names.worktree, ...(names.install ? [names.install] : []), names.rex, names.started, names.start];
     const failedAt = d.steps.findIndex((s) => s.state === "failed");
     const steps = planned.map((text): LaunchStep => {
       const s = d.steps.find((x) => x.text === text && x.state !== "undone");
