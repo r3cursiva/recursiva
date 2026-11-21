@@ -12,7 +12,7 @@ import { promisify } from "node:util";
 import { DATE_PRESETS, formatValue, ORDER_BY_OPTIONS, ORDER_KEYS, ORDER_WORDS as QUERY_ORDER_WORDS, parseQuery, PRIORITY_KEYWORDS, QUERY_KEYS, type QueryContext } from "@rsva/query";
 import { run, type Io } from "./commands.ts";
 import * as schema from "@rsva/schema/models";
-import { ORDER_WORDS, PRIORITY_WORDS, QUERY_VALUES, QUERY_WORDS, RELATION_WORDS } from "./completion.ts";
+import { ORDER_WORDS, PRIORITY_WORDS, QUERY_VALUES, QUERY_WORDS, RELATION_WORDS, RUN_STAGES } from "./completion.ts";
 import { cut } from "./style.ts";
 
 interface Seen {
@@ -633,6 +633,55 @@ test("inbox: a line per issue, newest first; read, unread and archive by key or 
   assert.equal(seen.length, 0);
 });
 
+test("runs: claim, renew, complete and fail send their bodies; a stop is said; the list newest first (RSVA-636)", async () => {
+  const path = "/api/v1/workspaces/acme/issues/CORE-1/runs";
+  const row = (over: Record<string, unknown> = {}) => ({ issue: "CORE-1", stage: "work", attempt: 1, agent: "bot@x.dev", leaseUntil: "2026-11-21T10:00:00.000Z", live: true, outcome: null, note: null, error: null, endedAt: null, ...over });
+  const cases: [string[], string, unknown][] = [
+    [["run", "claim", "core-1"], path, {}],
+    [["run", "claim", "CORE-1", "--stage", "verify", "--lease", "90m"], path, { stage: "verify", lease: 5400 }],
+    [["run", "renew", "CORE-1", "--lease", "2h"], `${path}/renew`, { lease: 7200 }],
+    [["run", "renew", "CORE-1", "--lease", "45"], `${path}/renew`, { lease: 45 }],
+    [["run", "complete", "CORE-1", "--note", "PR #3"], `${path}/complete`, { note: "PR #3" }],
+    [["run", "fail", "CORE-1", "--error", "-", "--note", "n"], `${path}/fail`, { error: "boom", note: "n" }],
+    [["run", "complete", "CORE-1", "--evidence", "CI green", "--evidence", "-", "--note", "PR #3"], `${path}/complete`, { evidence: ["CI green", "boom"], note: "PR #3" }],
+  ];
+  for (const [argv, url, body] of cases) {
+    answers = [{ body: { run: row() } }];
+    const r = await cli(argv, "boom\n");
+    assert.equal(r.code, 0, `${argv.join(" ")}: ${r.err}`);
+    assert.deepEqual([seen.at(-1)!.method, seen.at(-1)!.url, seen.at(-1)!.body], ["POST", url, body]);
+  }
+  answers = [{ body: { run: row() } }];
+  assert.equal((await cli(["run", "claim", "CORE-1"])).out, "claimed CORE-1 work attempt 1: live until 2026-11-21T10:00:00.000Z");
+
+  answers = [{ body: { run: row({ outcome: "stopped", attempt: 3, live: false, endedAt: "2026-11-21T09:00:00.000Z" }), stop: { reason: "3 failed attempts", movedTo: "In Review", written: true } } }];
+  assert.equal((await cli(["run", "fail", "CORE-1", "--error", "x"])).out, "failed CORE-1 work attempt 3: stopped at 2026-11-21T09:00:00.000Z\nstopped the work loop: 3 failed attempts; moved to In Review");
+
+  answers = [{ body: { runs: [row(), row({ attempt: 1, outcome: "failed", live: false, error: "tests failed\nat x", endedAt: "2026-11-21T08:00:00.000Z" }), row({ live: false })], criteria: [] } }];
+  assert.equal((await cli(["runs", "CORE-1"])).out, "#1  work  live     bot@x.dev  2026-11-21 10:00\n#1  work  failed   bot@x.dev  2026-11-21 08:00  tests failed\n#1  work  expired  bot@x.dev  2026-11-21 10:00");
+  assert.equal(seen.at(-1)!.url, path);
+
+  // Done when: the criteria numbered, the evidence under the run that gave it, the comment said.
+  const proof = [{ criterion: "tests pass", evidence: "CI run 12" }, { criterion: "docs\nupdated", evidence: "docs/x.md" }];
+  answers = [{ body: { runs: [row({ outcome: "done", live: false, note: "PR #3", evidence: proof, endedAt: "2026-11-21T09:00:00.000Z" })], criteria: ["tests pass", "docs updated"] } }];
+  assert.equal((await cli(["runs", "CORE-1"])).out, "#1  work  done  bot@x.dev  2026-11-21 09:00  PR #3\n    1. tests pass — CI run 12\n    2. docs updated — docs/x.md");
+  answers = [{ body: { runs: [], criteria: ["tests pass", "docs updated"] } }];
+  assert.equal((await cli(["run", "criteria", "CORE-1"])).out, "1. tests pass\n2. docs updated");
+  answers = [{ body: { runs: [], criteria: [] } }];
+  assert.equal((await cli(["run", "criteria", "CORE-1"])).out, "no Done when list: complete needs no evidence");
+  answers = [{ body: { runs: [], criteria: ["a"], moreCriteria: 3 } }];
+  assert.equal((await cli(["run", "criteria", "CORE-1"])).out, "1. a\nand 3 more: complete refuses a list this long; shorten it");
+  answers = [{ body: { runs: [row()], more: true, criteria: [] } }];
+  assert.match((await cli(["runs", "CORE-1"])).out, /\nthe newest 1; older runs are not listed$/);
+  answers = [{ body: { run: row({ outcome: "done", live: false, evidence: proof, endedAt: "2026-11-21T09:00:00.000Z" }), comment: { written: true } } }];
+  assert.equal((await cli(["run", "complete", "CORE-1", "--evidence", "a", "--evidence", "b"])).out, "completed CORE-1 work attempt 1: done at 2026-11-21T09:00:00.000Z\ncommented the evidence for 2 criteria");
+
+  seen.length = 0;
+  for (const argv of [["run", "fail", "CORE-1"], ["run", "claim", "CORE-1", "--lease", "1d"], ["run", "renew", "CORE-1", "--lease", "0"], ["run", "complete", "CORE-1", "--evidence", "-", "--evidence", "-"]])
+    assert.equal((await cli(argv)).code, 2, argv.join(" "));
+  assert.equal(seen.length, 0);
+});
+
 test("answers come compressed: the CLI asks for brotli and reads it", async () => {
   const list = { total: 1, issues: [{ ...row, title: "Compressed ".repeat(200) }] };
   answers = [{ raw: brotliCompressSync(JSON.stringify(list)), headers: { "content-encoding": "br" } }];
@@ -915,6 +964,7 @@ test("completion's fixed values are the packages' own, and the query takes every
   assert.deepEqual([...PRIORITY_WORDS].sort(), Object.values(PRIORITY_KEYWORDS).sort());
   assert.deepEqual([...ORDER_WORDS].sort(), ORDER_BY_OPTIONS.map((o) => o.value).sort());
   assert.deepEqual([...RELATION_WORDS], [...schema.RELATION_TYPES]);
+  assert.deepEqual([...RUN_STAGES], [...schema.RUN_STAGES]);
   assert.deepEqual([...QUERY_VALUES.updated!], [...DATE_PRESETS]);
   assert.deepEqual([...QUERY_VALUES.order!], Object.values(QUERY_ORDER_WORDS));
   const ctx = { states: new Map(), labels: new Map(), users: new Map(), me: null, issueKey: () => "", today: "2026-11-04" } as QueryContext;
@@ -933,12 +983,14 @@ compset() { [[ $1 == -P ]] || return 1; local m=\${(M)PREFIX##$~2}; [[ -n $m ]] 
 probe() { words=("$@"); CURRENT=$#; PREFIX=$words[CURRENT]; IPREFIX=; _rsva; print -r -- "--"; }`;
   const keys = QUERY_WORDS.map((w) => `${w}:`).join(" ");
   const cases: [string[], string][] = [
-    [[""], "describe|issues my show open edit create update move archive delete restore comments comment uncomment link unlink attach detach relate unrelate inbox cycles cycle projects project states state labels label members views workspace tui login logout completion api help"],
+    [[""], "describe|issues my show open edit create update move archive delete restore comments comment uncomment link unlink attach detach relate unrelate inbox run runs cycles cycle projects project states state labels label members views workspace tui login logout completion api help"],
     [["relate", "CORE-1", ""], "|blockedBy blocks related duplicateOf duplicates"],
     [["issues", "--order", ""], "|updatedAt createdAt priority dueDate startDate manual"],
     [["update", "CORE-1", "--priority", ""], "|urgent high medium low none"],
     [["create", "x", "-p", ""], ""],
-    [["issues", "is:"], "is:|blocked blocking duplicate"],
+    [["issues", "is:"], "is:|blocked blocking duplicate ready"],
+    [["run", ""], "describe|claim renew complete fail criteria"],
+    [["run", "claim", "CORE-1", "--stage", ""], "|triage work verify"],
     [["my", "-group:completed,c"], "-group:completed,|backlog unstarted started completed cancelled"],
     [["issues", "-la"], `-|${keys}`],
     [["issues", "-p", "PLNR", "st"], `|${keys}`],
@@ -948,7 +1000,7 @@ probe() { words=("$@"); CURRENT=$#; PREFIX=$words[CURRENT]; IPREFIX=; _rsva; pri
     [["state", "create", "Review", "--group", ""], "|backlog unstarted started completed cancelled"],
     [["cycle", "show", "--"], "|--project -p --help -h --plain --color --json"],
     [["inbox", ""], "|read unread archive"],
-    [["help", ""], "|issues my show open edit create update move archive delete restore comments comment uncomment link unlink attach detach relate unrelate inbox cycles cycle projects project states state labels label members views workspace tui login logout completion api help"],
+    [["help", ""], "|issues my show open edit create update move archive delete restore comments comment uncomment link unlink attach detach relate unrelate inbox run runs cycles cycle projects project states state labels label members views workspace tui login logout completion api help"],
   ];
   const script = [fakes, out, ...cases.map(([w]) => `probe rsva ${w.map(sh).join(" ")}`)].join("\n");
   const zsh = spawnSync("zsh", ["-f"], { input: script });

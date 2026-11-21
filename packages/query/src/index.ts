@@ -87,9 +87,10 @@ export interface Filter {
   parent?: (string | "none" | "any")[];
   /**
    * What the issue's relations say (PLNR-51): `blocked` waits on an open issue, `blocking` an open issue waits on it,
-   * `duplicate` it is marked a duplicate of another issue (RSVA-174).
+   * `duplicate` it is marked a duplicate of another issue (RSVA-174), `ready` it is open, not blocked and no agent holds a
+   * live run on it (RSVA-636): only an index that knows the runs answers it (IssueIndex.hasLiveRun).
    */
-  is?: ("blocked" | "blocking" | "duplicate")[];
+  is?: ("blocked" | "blocking" | "duplicate" | "ready")[];
   /** What the issue carries (RSVA-174): `link` a link, a pull request or a commit attached to it; an uploaded file is not one. */
   has?: "link"[];
   startDate?: DateRange;
@@ -122,6 +123,11 @@ export interface IssueIndex {
   isBlocking(issue: Issue): boolean;
   /** A link, a pull request or a commit is attached to it (isLinkKind of @rsva/schema): what `has:link` asks. */
   hasLink(issue: Issue): boolean;
+  /**
+   * An agent holds a live run on it (RSVA-636). Runs live on the server only, so only the server's index has this; a query
+   * of `is:ready` over an index without it is refused (parseQuery) rather than answered as if no issue were claimed.
+   */
+  hasLiveRun?(issue: Issue): boolean;
 }
 
 /** What the query needs besides the issues: lookups and the current user. */

@@ -1,0 +1,1 @@
+ALTER TABLE "run" ADD COLUMN "stop_tx_id" uuid;

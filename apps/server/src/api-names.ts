@@ -6,12 +6,12 @@ import type { AccountSettings } from "@rsva/protocol";
 import { STRONG, similarIssues, type SimilarOptions } from "@rsva/protocol/similar";
 import { inProject, issueView as viewOf, PRIORITY_KEYWORDS, type IssueIndex, type QueryContext } from "@rsva/query";
 import { defaultState, isLinkKind, isOpenIssue, issueKey, movedKeysOf, parseIssueKey, projectsByKey, type Attachment, type Cycle, type Issue, type Label, type Project, type User, type WorkflowState } from "@rsva/schema/models";
-import { and, asc, eq, inArray, isNull, or, sql as dsql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, or, sql as dsql } from "drizzle-orm";
 import { db, movedUnder, schema } from "./db.ts";
 import { HttpError } from "./http.ts";
 import { COLUMNS } from "./sync/columns.ts";
 
-const { project, workflowState, label, cycle, user, member, issue, attachment } = schema;
+const { project, workflowState, label, cycle, user, member, issue, attachment, run } = schema;
 
 export interface Names {
   projects: Map<string, Project>;
@@ -66,14 +66,20 @@ export function similarTo(n: Names, issues: readonly Issue[], title: string, opt
   };
 }
 
-/** The workspace's issues for `parent:`, `is:` and `has:`, as the browser's pool answers them; a list that names none skips the load. */
+/**
+ * The workspace's issues for `parent:`, `is:` and `has:`, as the browser's pool answers them, and the issues agents hold a
+ * live run on for `is:ready`, which only the server knows (RSVA-636); a list that names none skips the load.
+ */
 export async function loadIssueIndex(n: Names, workspaceId: string): Promise<IssueIndex> {
   // Kinds per issue, distinct: a few rows per issue at most, and isLinkKind stays the one rule of what a link is.
-  const [rows, kinds] = await Promise.all([
+  const [rows, kinds, live] = await Promise.all([
     loadIssues(workspaceId, undefined, true),
     db.selectDistinct({ issueId: attachment.issueId, kind: attachment.kind }).from(attachment).where(eq(attachment.workspaceId, workspaceId)),
+    // A run whose lease has passed is not live, though no claim has closed it yet (api-runs.ts).
+    db.select({ issueId: run.issueId }).from(run).where(and(eq(run.workspaceId, workspaceId), isNull(run.outcome), gt(run.leaseUntil, dsql`now()`))),
   ]);
   const linked = new Set(kinds.filter((a) => isLinkKind(a.kind)).map((a) => a.issueId));
+  const claimed = new Set(live.map((r) => r.issueId));
   const byId = new Map(rows.map((i) => [i.id, i]));
   const byKey = new Map(rows.map((i) => [keyOf(n, i), i]));
   const open = (i: Issue) => isOpenIssue(i, n.states.get(i.stateId)?.group);
@@ -88,6 +94,7 @@ export async function loadIssueIndex(n: Names, workspaceId: string): Promise<Iss
       }),
     isBlocking: (i) => open(i) && waitedOn.has(i.id),
     hasLink: (i) => linked.has(i.id),
+    hasLiveRun: (i) => claimed.has(i.id),
   };
 }
 

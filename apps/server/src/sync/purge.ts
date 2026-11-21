@@ -4,8 +4,8 @@
 //
 // One transaction per issue. First the other issues let go of it, each a logged change in their history: sub-issues lose
 // their parent, and relations to it (blocked by, related, duplicate of) go. Then everything that is the issue's own goes
-// with its row: the description, comments, reactions, links and files, GitHub links, inbox marks and queued
-// notifications. The log gets one D for the issue: open clients drop it, and a snapshot made after never had it.
+// with its row: the description, comments, reactions, links and files, GitHub links, inbox marks, queued notifications
+// and agent runs. The log gets one D for the issue: open clients drop it, and a snapshot made after never had it.
 //
 // The log's earlier rows of the issue stay. Removing them would leave holes in the numbering, and a client reads a hole
 // as a missed frame and asks again from before it, for ever (packages/sync/src/client.ts, onDelta). They forget the words,
@@ -27,7 +27,7 @@ import { TxError, type Pending } from "./tx-error.ts";
 import { forgetText } from "./log.ts";
 import { roleOf, updateIssue } from "./write.ts";
 
-const { issue, comment, reaction, attachment, githubLink, inboxMark, notifyOutbox, document, user, syncAction } = schema;
+const { issue, comment, reaction, attachment, githubLink, inboxMark, notifyOutbox, run, document, user, syncAction } = schema;
 
 /** A person's Delete permanently: an issue in the trash, by its creator or an admin, never by an agent. */
 export async function purgeIssueAs(tx: Tx, workspaceId: string, actorId: string, id: string): Promise<Pending[]> {
@@ -120,7 +120,7 @@ async function purge(tx: Tx, workspaceId: string, actorId: string, row: { id: st
   // Reactions point at comments: they go before them.
   await tx.delete(reaction).where(eq(reaction.issueId, id));
   await tx.delete(comment).where(eq(comment.issueId, id));
-  for (const t of [attachment, githubLink, inboxMark, notifyOutbox] as const) await tx.delete(t).where(eq(t.issueId, id));
+  for (const t of [attachment, githubLink, inboxMark, notifyOutbox, run] as const) await tx.delete(t).where(eq(t.issueId, id));
   await tx.delete(document).where(eq(document.id, id));
   await tx.delete(issue).where(eq(issue.id, id));
   out.push({ m: "Issue", mid: id, a: "D", d: { projectId: row.projectId } });

@@ -8,7 +8,7 @@ import { MY_WORK, STATE_GROUPS, type IssueRow } from "@rsva/terminal/issues";
 import { scratchFile } from "@rsva/terminal/programs";
 import { plural } from "@rsva/schema/util";
 import { clean, escaped, plain } from "@rsva/terminal/text";
-import { MOVE_WORDS, ORDER_WORDS, PRIORITY_WORDS, quoted, RELATION_WORDS, zsh, type Completable } from "./completion.ts";
+import { MOVE_WORDS, ORDER_WORDS, PRIORITY_WORDS, quoted, RELATION_WORDS, RUN_STAGES, zsh, type Completable } from "./completion.ts";
 import {
   commentList,
   cycleCard,
@@ -21,6 +21,9 @@ import {
   memberList,
   projectCard,
   projectList,
+  criteriaList,
+  runLine,
+  runList,
   similarLine,
   stateList,
   viewList,
@@ -34,6 +37,7 @@ import {
   type MemberRow,
   type ProjectFull,
   type ProjectRow,
+  type RunRow,
   type SimilarRow,
   type StateRow,
   type ViewRow,
@@ -118,6 +122,11 @@ const FLAGS = {
   force: { boolean: true },
   to: {},
   "sub-issues": { boolean: true },
+  stage: { values: RUN_STAGES },
+  lease: {},
+  note: {},
+  error: {},
+  evidence: { multiple: true },
 } as const satisfies Record<string, FlagSpec>;
 
 type Flag = keyof typeof FLAGS;
@@ -333,7 +342,7 @@ const issueCommands: Record<string, Command> = {
   issues: {
     args: "[query...]",
     flags: "[-p KEY] [--view NAME] [--order FIELD] [--limit N]",
-    about: `list; the query is the language of the app's / field: state:"In Review" label:bug -label:security cycle:active parent:INFRA-300 is:blocked has:link order:priority text; ${LIMIT_MAX} at most`,
+    about: `list; the query is the language of the app's / field: state:"In Review" label:bug -label:security cycle:active parent:INFRA-300 is:blocked is:ready has:link order:priority text; ${LIMIT_MAX} at most`,
     run: (c) => issueQuery(c),
   },
   my: {
@@ -543,6 +552,80 @@ const inbox: Command = {
     const r = await c.api.request<{ marked: number }>("POST", "/inbox", { body: { [what]: c.v.all ? "all" : keys.map((k) => k.toUpperCase()) } });
     return wrote(c, r, (d) => `${what === "archive" ? "archived" : `marked ${what}`}: ${d.marked}`);
   },
+};
+
+// ── Agent runs (RSVA-636): one agent's turn at a stage of an issue, held by a lease ─────────────────────────────────
+
+/** `--lease 90m`: seconds, or a number of s, m or h; the server holds it to its bounds. */
+function lease(v: string | undefined): number | undefined {
+  if (v === undefined) return undefined;
+  const m = /^(\d+)([smh]?)$/.exec(v.trim());
+  if (!m || +m[1]! === 0) throw new UsageError(`--lease: a duration such as 90s, 30m or 2h, not ${v}`);
+  return +m[1]! * { "": 1, s: 1, m: 60, h: 3600 }[m[2] as "" | "s" | "m" | "h"];
+}
+
+interface RunAnswer {
+  run: RunRow;
+  stop?: { reason: string; movedTo: string | null; written: boolean; refused?: string };
+  /** A completion with evidence: its comment on the issue. */
+  comment?: { written: boolean; refused?: string };
+}
+
+/** A run's answer in words; a stop says why, where the issue went, and whether that could be written; evidence, its comment. */
+const ranLine = (c: Ctx, says: string) => (d: RunAnswer) =>
+  [
+    done(c, `${says} ${runLine(d.run)}`),
+    ...(d.stop ? [`stopped the ${d.run.stage} loop: ${d.stop.reason}${d.stop.movedTo ? `; moved to ${d.stop.movedTo}` : ""}${d.stop.written ? "" : `; not written: ${d.stop.refused}`}`] : []),
+    ...(d.comment ? [d.comment.written ? `commented the evidence for ${plural(d.run.evidence?.length ?? 0, "criterion", "criteria")}` : `the evidence comment was not written: ${d.comment.refused}`] : []),
+  ].join("\n");
+
+/** `--evidence T` once per criterion, in order; one of them may be `-`, the text on stdin. */
+async function evidence(c: Ctx): Promise<string[] | undefined> {
+  const given = c.v.evidence;
+  if (!given) return undefined;
+  if (given.filter((e) => e === "-").length > 1) throw new UsageError("--evidence: only one of them can be -, the text on stdin");
+  return Promise.all(given.map(async (e) => (await text(c, e))!));
+}
+
+const runsOf = (c: Ctx) => c.api.request<{ runs: RunRow[]; more?: boolean; criteria: string[]; moreCriteria?: number }>("GET", issuePath(c, "/runs"));
+
+const runCall = (c: Ctx, tail: string, body: Record<string, unknown>, says: string) =>
+  wrote(c, c.api.request<RunAnswer>("POST", issuePath(c, `/runs${tail}`), { body: given(body) }), ranLine(c, says));
+
+const runCommands: Record<string, Command> = {
+  claim: {
+    args: "<key>",
+    flags: "[--stage S] [--lease 1h]",
+    about: `take a stage of the issue (${RUN_STAGES.join(", ")}; work when left out) with a lease, an hour by default; refused while another run is live, or after the stage's loop stopped until a person moves the issue out of review`,
+    run: (c) => runCall(c, "", { stage: c.v.stage, lease: lease(c.v.lease) }, "claimed"),
+  },
+  renew: { args: "<key>", flags: "[--lease 1h]", about: "extend your live run's lease from now", run: (c) => runCall(c, "/renew", { lease: lease(c.v.lease) }, "renewed") },
+  complete: {
+    args: "<key>",
+    flags: "[--evidence T]... [--note T]",
+    about: "end your live run as done; on work and verify, an issue with a Done when list needs --evidence for each criterion, in order (run criteria lists them); - reads one from stdin",
+    run: async (c) => runCall(c, "/complete", { note: c.v.note, evidence: await evidence(c) }, "completed"),
+  },
+  fail: {
+    args: "<key>",
+    flags: "--error T [--note T]",
+    about: "end your live run as failed; three failed attempts in a day, or the same error twice in a row, stop the loop: the issue goes to review with a comment of what was tried. The error (its first 500 characters are kept) is visible to everyone in the workspace: no secrets in it",
+    async run(c) {
+      if (c.v.error === undefined) throw new UsageError("fail: what failed? --error TEXT, - reads it from stdin");
+      return runCall(c, "/fail", { error: await text(c, c.v.error), note: c.v.note }, "failed");
+    },
+  },
+  criteria: {
+    args: "<key>",
+    about: "the issue's Done when criteria, numbered: what complete needs evidence for, in this order",
+    run: async (c) => shown(c, await runsOf(c), (d) => criteriaList(d.criteria, c.style, d.moreCriteria)),
+  },
+};
+
+const runs: Command = {
+  args: "<key>",
+  about: "an issue's agent runs, newest first: attempt, stage, outcome, agent, when, note",
+  run: async (c) => shown(c, await runsOf(c), (d) => runList(d.runs, c.style, d.more)),
 };
 
 const cycles: Command = {
@@ -822,7 +905,7 @@ const help: Command = {
 };
 
 /** Every command, in the order the help lists them. */
-const COMMANDS: Record<string, Command | Group> = { ...issueCommands, inbox, cycles, cycle: cycleGroup, ...settingsCommands, tui, login, logout, completion, api, help };
+const COMMANDS: Record<string, Command | Group> = { ...issueCommands, inbox, run: { about: "an agent's run on an issue: claim, renew, complete, fail, criteria", commands: runCommands }, runs, cycles, cycle: cycleGroup, ...settingsCommands, tui, login, logout, completion, api, help };
 
 const isGroup = (x: Command | Group): x is Group => "commands" in x;
 

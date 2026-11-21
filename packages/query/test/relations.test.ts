@@ -111,6 +111,41 @@ describe("is:", () => {
   });
 });
 
+describe("is:ready (RSVA-636)", () => {
+  const blocker = issue(41);
+  const waiting = issue(42, { blockedByIds: [blocker.id] });
+  const claimed = issue(43);
+  const closed = issue(44, { stateId: S.done.id });
+  const freed = issue(45, { blockedByIds: [closed.id] });
+  const reviewed = issue(46, { stateId: S.review.id });
+  const all = [blocker, waiting, claimed, closed, freed, reviewed];
+  const live = new Set([claimed.id]);
+  const c = baseCtx({ issues: { ...indexOf(all), hasLiveRun: (i) => live.has(i.id) } });
+  const run = (q: string) => {
+    const p = parseQuery(q, c);
+    assert.deepEqual(p.errors, []);
+    return runQueryRows(all, p.filter, display(), c).map((i) => i.number).sort((a, b) => a - b);
+  };
+
+  test("open, no open blocker, not waiting for review, no live run", () => {
+    assert.deepEqual(run("is:ready"), [41, 45]);
+    assert.deepEqual(run("-is:ready"), [42, 43, 44, 46]);
+    assert.deepEqual(run("is:ready,blocked"), [41, 42, 45]);
+  });
+
+  test("an index that cannot see runs refuses it instead of calling a claimed issue ready", () => {
+    const { errors, filter } = parseQuery("is:ready priority:high", baseCtx({ issues: indexOf(all) }));
+    assert.match(errors[0]!.message, /only the server has/);
+    assert.deepEqual(filter, { priority: [2] });
+  });
+
+  test("it is suggested only where an index can answer it", () => {
+    const suggested = (ctx: typeof c) => parseQuery("is:rea", ctx).errors[0]!.suggestions;
+    assert.ok(suggested(c).includes("ready"));
+    assert.ok(!suggested(baseCtx({ issues: indexOf(all) })).includes("ready"), "the browser's and the TUI's index have no runs");
+  });
+});
+
 describe("has:", () => {
   const linked = issue(31);
   const plain = issue(32);

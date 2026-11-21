@@ -268,8 +268,8 @@ const KIND_NAMES: Record<ListKey, string> = {
 const CYCLE_WORDS = ["active", "next", "none"];
 /** Words `parent:` takes besides issue keys (PLNR-173). */
 const PARENT_WORDS = ["none", "any"];
-/** What `is:` can say about an issue (PLNR-51, RSVA-174). */
-const IS_WORDS = ["blocked", "blocking", "duplicate"];
+/** What `is:` can say about an issue (PLNR-51, RSVA-174, RSVA-636). */
+const IS_WORDS = ["blocked", "blocking", "duplicate", "ready"];
 /** The `is:` words a field of the issue answers, with no other issues loaded. */
 const IS_OWN_WORDS = ["duplicate"];
 /** What `has:` can ask of an issue (RSVA-174). */
@@ -318,7 +318,8 @@ function resolvers(ctx: QueryContext) {
       case "parent":
         return PARENT_WORDS;
       case "is":
-        return IS_WORDS;
+        // `ready` only where it can be answered: an index that knows the runs (the server's).
+        return ctx.issues?.hasLiveRun ? IS_WORDS : IS_WORDS.filter((w) => w !== "ready");
       case "has":
         return HAS_WORDS;
     }
@@ -430,6 +431,10 @@ export function parseQuery(text: string, ctx: QueryContext): ParsedQuery {
     for (const v of t.values) {
       if (!v.text && !v.quoted) continue;
       const got = r.resolve(lk, v);
+      if (got?.[0] === "ready" && lk === "is" && ctx.issues && !ctx.issues.hasLiveRun) {
+        errors.push({ message: `"is:ready" needs the agents' runs, which only the server has: ask the API or rsva`, start: v.start, end: v.end, suggestions: [] });
+        continue;
+      }
       if (!got) {
         errors.push({
           message: `No ${KIND_NAMES[lk]} named "${v.text}"`,

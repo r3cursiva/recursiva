@@ -484,6 +484,53 @@ export const memberList = (members: readonly MemberRow[], s: Style = PLAIN): str
 export const viewList = (views: readonly ViewRow[], s: Style = PLAIN): string =>
   views.length ? table(views.map((v) => [v.name, v.shared ? "shared" : "mine", v.query]), s, [s.bold, s.gray]) : s.gray("no saved views");
 
+/** An agent's run on an issue (RSVA-636), as the API answers it. */
+export interface RunRow {
+  issue: string;
+  stage: string;
+  attempt: number;
+  agent: string | null;
+  leaseUntil: string;
+  live: boolean;
+  outcome: string | null;
+  note: string | null;
+  error: string | null;
+  /** A done run's criteria with its evidence for each. */
+  evidence?: { criterion: string; evidence: string }[] | null;
+  endedAt: string | null;
+}
+
+const OUTCOME: Record<string, Colour> = { live: "green", done: "green", failed: "red", stopped: "red", expired: "yellow" };
+/** Live, or its lease passed with nobody closing it yet: what the next claim will find. */
+const runState = (r: RunRow) => r.outcome ?? (r.live ? "live" : "expired");
+
+/** One run in a line: its issue, stage and attempt, how it stands, and until or since when. */
+export const runLine = (r: RunRow): string => `${r.issue} ${r.stage} attempt ${r.attempt}: ${runState(r)} ${r.outcome ? `at ${r.endedAt}` : `until ${r.leaseUntil}`}`;
+
+/** Numbered lines, the number in grey. */
+const numbered = (items: readonly string[], s: Style, indent = "") => items.map((t, i) => `${indent}${s.gray(`${i + 1}.`)} ${oneLine(t)}`);
+
+/**
+ * An issue's runs, newest first: attempt, stage, outcome, agent, when, then the note or the error's first line; under a
+ * done run with evidence, each criterion with it.
+ */
+export function runList(runs: readonly RunRow[], s: Style = PLAIN, more = false): string {
+  if (!runs.length) return s.gray("no runs");
+  const rows = lines(
+    runs.map((r) => [`#${r.attempt}`, r.stage, runState(r), r.agent ?? "?", minute(r.endedAt ?? r.leaseUntil, s), r.note ?? r.error?.split("\n")[0] ?? ""]),
+    s,
+    [s.gray, undefined, (cell) => word(s, OUTCOME, cell), undefined, s.gray],
+  );
+  const out = rows.flatMap((row, i) => [row, ...numbered((runs[i]!.evidence ?? []).map((p) => `${p.criterion} — ${p.evidence}`), s, "    ")]);
+  return [...out, ...(more ? [s.gray(`the newest ${runs.length}; older runs are not listed`)] : [])].join("\n");
+}
+
+/** An issue's Done when criteria, numbered; none said so. */
+export const criteriaList = (criteria: readonly string[], s: Style = PLAIN, more = 0): string =>
+  criteria.length
+    ? [...numbered(criteria, s), ...(more ? [s.gray(`and ${more} more: complete refuses a list this long; shorten it`)] : [])].join("\n")
+    : s.gray("no Done when list: complete needs no evidence");
+
 /** The workspace and whose token this is: a person's or the agent's, its role and scope, what it may change, and what members may beyond issues. */
 export function workspaceCard(w: WorkspaceInfo, s: Style = PLAIN): string {
   const token = [w.me.role, w.me.kind === "agent" ? "agent" : "", w.me.scope ? `${w.me.scope} token` : ""].filter(Boolean).join(" · ");

@@ -60,7 +60,11 @@ and effort, press Enter:
 - the issue moves to In Progress, delegated to the agent; its row in the TUI shows the agent running, waiting, idle or done;
 - the agent reads the issue through `rsva`, treats its text as data, never merges or deploys, and asks in a comment when it
   is unsure — you answer it in its Rex session;
-- it pushes the branch and opens a draft pull request: the issue goes to In Review, and to Done when the pull request merges.
+- it pushes the branch and opens a draft pull request: the issue goes to In Review, and to Done when the pull request merges;
+- the work is a run on the server, claimed before the clone and renewed while the TUI is open or `rsva-tui agents` runs; a
+  lapsed lease stays the holder's until another agent claims. The agent ends it with evidence for each "Done when"
+  criterion, or fails it, and a session that ends without either fails it: three failed attempts in a day, or the same
+  error twice, stop the loop and send the issue to review.
 
 <p align="center">
   <picture>
@@ -98,8 +102,10 @@ with its own recursiva token and a GitHub token of its own, never yours. Require
   for the server's answer; no runtime dependencies. `rsva help` lists the commands.
   Not on npm yet: it runs from a clone, `pnpm install` and `node apps/cli/bin/rsva.js` (the steps:
   [Getting rsva](https://rsva.dev/docs/terminal/cli#getting-rsva)). `rsva tui` comes with it.
-- **HTTP API**, `/api/v1/workspaces/:ws/...`: issues, comments, cycles, relations, links, labels, states, projects, tokens.
-  Reference: https://rsva.dev/docs/agents/api (the whole manual as one file: https://rsva.dev/docs/llms-full.txt).
+- **HTTP API**, `/api/v1/workspaces/:ws/...`: issues, comments, cycles, relations, links, labels, states, projects, tokens,
+  and agent runs (`POST …/issues/:key/runs` claims an issue with a lease; `…/runs/renew`, `/complete`, `/fail`; `GET`
+  lists the newest 50 with the issue's criteria; a lapsed lease stays the holder's until another agent claims; three failed
+  attempts in a day or the same error twice stop the loop and send the issue to review; on an issue whose description has a "Done when" list, `/complete` of work or verify needs `evidence`, one text per criterion). Reference: https://rsva.dev/docs/agents/api (the whole manual as one file: https://rsva.dev/docs/llms-full.txt).
 
 There is no MCP server and no SDK yet.
 
