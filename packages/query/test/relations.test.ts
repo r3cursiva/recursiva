@@ -117,7 +117,8 @@ describe("is:ready (RSVA-636)", () => {
   const claimed = issue(43);
   const closed = issue(44, { stateId: S.done.id });
   const freed = issue(45, { blockedByIds: [closed.id] });
-  const all = [blocker, waiting, claimed, closed, freed];
+  const reviewed = issue(46, { stateId: S.review.id });
+  const all = [blocker, waiting, claimed, closed, freed, reviewed];
   const live = new Set([claimed.id]);
   const c = baseCtx({ issues: { ...indexOf(all), hasLiveRun: (i) => live.has(i.id) } });
   const run = (q: string) => {
@@ -126,9 +127,9 @@ describe("is:ready (RSVA-636)", () => {
     return runQueryRows(all, p.filter, display(), c).map((i) => i.number).sort((a, b) => a - b);
   };
 
-  test("open, no open blocker, no live run", () => {
+  test("open, no open blocker, not waiting for review, no live run", () => {
     assert.deepEqual(run("is:ready"), [41, 45]);
-    assert.deepEqual(run("-is:ready"), [42, 43, 44]);
+    assert.deepEqual(run("-is:ready"), [42, 43, 44, 46]);
     assert.deepEqual(run("is:ready,blocked"), [41, 42, 45]);
   });
 
