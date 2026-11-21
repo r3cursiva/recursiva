@@ -46,6 +46,16 @@ test("the description as the server holds it: a mixed list the editor splits in 
   assert.deepEqual(doneWhen(md), ["checked one", "plain one"]);
 });
 
+test("a marker followed by a long run of spaces is rejected at once: user text costs linear time", () => {
+  const md = `done when${" ".repeat(50_000)}x\n- item`;
+  const t0 = performance.now();
+  assert.deepEqual(doneWhen(md), []);
+  assert.ok(performance.now() - t0 < 50, `took ${performance.now() - t0} ms`);
+  assert.deepEqual(doneWhen("**Done when**:\n- a"), ["a"], "a colon after the emphasis");
+  assert.deepEqual(doneWhen("_done when_\n- a"), ["a"]);
+  assert.deepEqual(doneWhen("done whenever\n- a"), []);
+});
+
 test("evidence: one non-blank text per criterion, in order; the first missing one named by number and text", () => {
   const criteria = ["tests pass", "docs updated"];
   assert.deepEqual(proofOf(criteria, [" CI run 12 ", "docs/x.md"]), { proof: [{ criterion: "tests pass", evidence: "CI run 12" }, { criterion: "docs updated", evidence: "docs/x.md" }] });

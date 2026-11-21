@@ -9,7 +9,26 @@
 // splits a list of checkboxes and bullets in two). Each top-level item is a criterion: its text, a checkbox taken off;
 // nested items are details of their criterion, not criteria.
 
-const MARKER = /^(?:#{1,6}[ \t]+)?(?:\*\*|__|\*|_)?\s*done when\s*:?\s*(?:\*\*|__|\*|_)?\s*:?\s*$/i;
+/** A marker line is short: a longer one is not looked at, so no line of user text costs more than this. */
+const MARKER_MAX = 80;
+const EMPHASIS = /^(\*\*|__|\*|_)/;
+
+/** Without a trailing colon, then without the emphasis around it. */
+const unwrap = (s: string) => {
+  const t = s.endsWith(":") ? s.slice(0, -1).trimEnd() : s;
+  const em = EMPHASIS.exec(t)?.[1];
+  return em && t.length > 2 * em.length && t.endsWith(em) ? t.slice(em.length, -em.length).trim() : t;
+};
+
+/**
+ * Whether a line is the section's marker: heading marks, emphasis and a colon taken off in linear steps, and what is
+ * left compared, case-insensitively; no pattern that could backtrack over a long line.
+ */
+function isMarker(line: string): boolean {
+  if (line.length > MARKER_MAX) return false;
+  const text = unwrap(unwrap(line.trim().replace(/^#{1,6}[ \t]+/, "")));
+  return (text.endsWith(":") ? text.slice(0, -1).trimEnd() : text).toLowerCase() === "done when";
+}
 const HEADING = /^#{1,6}[ \t]/;
 const ITEM = /^(?:[-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
 const BOX = /^\[[ xX]\][ \t]+/;
@@ -25,7 +44,7 @@ export function doneWhen(markdown: string): string[] {
     const run = FENCE.exec(lines[i]!)?.[1];
     if (run && !fence) fence = run;
     else if (run && run[0] === fence[0] && run.length >= fence.length) fence = "";
-    else if (!fence && MARKER.test(lines[i]!)) at = i;
+    else if (!fence && isMarker(lines[i]!)) at = i;
   }
   if (at < 0) return [];
   const heading = HEADING.test(lines[at]!);
