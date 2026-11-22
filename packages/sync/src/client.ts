@@ -454,6 +454,9 @@ class Engine implements SyncEngine, FeedHost, LinkHost, TabHost {
   get issues(): ReadonlyMap<string, Issue> {
     return this.pool.maps.Issue;
   }
+  get decisions(): ReadonlyMap<string, Decision> {
+    return this.pool.maps.Decision;
+  }
   projectList(): Project[] {
     return this.orderedProjects.get();
   }

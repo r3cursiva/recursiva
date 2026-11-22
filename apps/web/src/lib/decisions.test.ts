@@ -1,26 +1,31 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { OpenDecision } from "@rsva/protocol/decisions";
+import type { Decision } from "@rsva/schema/models";
 import { buildQueue, commandOf, evidenceOf, Sitting, UNDO_MS, unblockCounts, type Card, type Entry } from "./decisions.ts";
 
-const ask = (n: number, extra: Partial<OpenDecision> = {}): OpenDecision => ({
+const ask = (n: number, extra: Partial<Decision> = {}): Decision => ({
+  id: `c${n}`,
+  issueId: `i${n}`,
   kind: "question",
   question: `Question ${n}?`,
   options: [
-    { label: "Yes", detail: "" },
-    { label: "No", detail: "" },
-    { label: "Later", detail: "" },
+    { label: "Yes", detail: "", why: "" },
+    { label: "No", detail: "", why: "" },
+    { label: "Later", detail: "", why: "" },
   ],
   recommended: 0,
-  why: "",
   evidence: [],
-  group: null,
-  commentId: `c${n}`,
-  issueId: `i${n}`,
-  key: `CORE-${n}`,
-  by: "agent",
-  at: `2026-11-0${n}T10:00:00Z`,
-  doneWhen: [],
+  topic: null,
+  askedById: "agent",
+  status: "open",
+  answer: null,
+  answerOption: null,
+  answeredById: null,
+  answeredAt: null,
+  commentId: null,
+  answerCommentId: null,
+  ruleId: null,
+  createdAt: `2026-11-0${n}T10:00:00Z`,
   ...extra,
 });
 const none = () => 0;
@@ -45,12 +50,22 @@ test("unblocks counts the open issues blocked by an issue", () => {
   assert.deepEqual([of("x"), of("y"), of("z")], [2, 1, 0]);
 });
 
-test("close proposals with one group and the same options are one card; a lone one, or other options, stay apart", () => {
-  const close = (n: number, group: string | null, options = ask(n).options) => ask(n, { kind: "close", group, options, question: `Close CORE-${n}?` });
-  const open = [close(1, "Already shipped"), close(2, "Already shipped"), close(3, "Already shipped", [{ label: "Close", detail: "" }, { label: "Keep", detail: "" }]), close(4, "Duplicates"), close(5, null), ask(6, { group: "Already shipped" })];
+test("questions of one kind and topic with the same options are one card; a lone one, other options or another kind stay apart", () => {
+  const close = (n: number, topic: string | null, options = ask(n).options) => ask(n, { kind: "close", topic, options, question: `Close CORE-${n}?` });
+  const open = [
+    close(1, "Already shipped"),
+    close(2, "Already shipped"),
+    close(3, "Already shipped", [
+      { label: "Close", detail: "", why: "" },
+      { label: "Keep", detail: "", why: "" },
+    ]),
+    close(4, "Duplicates"),
+    close(5, null),
+    ask(6, { topic: "Already shipped" }),
+  ];
   const q = buildQueue(open, (id) => (id === "i2" ? 3 : 0), "unblocks");
   const group = q.find((c) => c.members.length > 1)!;
-  assert.deepEqual(group.members.map((m) => m.commentId), ["c1", "c2"]);
+  assert.deepEqual(group.members.map((m) => m.id), ["c1", "c2"]);
   assert.equal(group.question, "Already shipped: close 2 issues?");
   assert.equal(group.unblocks, 3);
   assert.deepEqual(group.each, [0, 3]);
@@ -133,9 +148,9 @@ test("leaving the page posts what is held", () => {
 
 test("a group's unchecked members are left out of the answer and of the summary", () => {
   const s = new Sitting(() => {}, clock());
-  const g = buildQueue([1, 2, 3].map((n) => ask(n, { kind: "close", group: "Duplicates", by: n === 3 ? "other" : "agent" })), (id) => (id === "i3" ? 4 : 1), "oldest")[0]!;
+  const g = buildQueue([1, 2, 3].map((n) => ask(n, { kind: "close", topic: "Duplicates", askedById: n === 3 ? "other" : "agent" })), (id) => (id === "i3" ? 4 : 1), "oldest")[0]!;
   const e = s.answer(g, { option: 0, label: "Yes" }, true, g.members.slice(0, 2));
-  assert.deepEqual(e.members.map((m) => m.commentId), ["c1", "c2"]);
+  assert.deepEqual(e.members.map((m) => m.id), ["c1", "c2"]);
   assert.equal(e.rule, false, "a group saves no rule");
   assert.deepEqual(s.summary, { decisions: 2, unblocked: 2, askers: 1, minutes: 0, rules: [] });
   assert.ok(!s.answered.has("c3"), "the unchecked one stays in the queue");
@@ -144,11 +159,12 @@ test("a group's unchecked members are left out of the answer and of the summary"
 test("the summary counts what was answered and the rules saved, and the time from the first answer to the last", () => {
   const c = clock();
   const s = new Sitting(() => {}, c);
-  s.answer(card(), { option: 0, label: "Yes" }, true);
+  s.answer(buildQueue([ask(1, { topic: "courier" })], none, "oldest")[0]!, { option: 0, label: "Yes" }, true);
   c.tick(3 * 60_000);
-  s.answer(buildQueue([ask(2)], () => 2, "oldest")[0]!, { text: "Not now" }, true);
+  const e = s.answer(buildQueue([ask(2)], () => 2, "oldest")[0]!, { text: "Not now" }, true);
+  assert.equal(e.rule, false, "no topic, no rule: a rule answers a topic, never a question's words");
   const sum = s.summary;
-  assert.deepEqual(sum, { decisions: 2, unblocked: 2, askers: 1, minutes: 3, rules: ["In CORE, when asked “Question 1?”, answer “Yes”."] });
+  assert.deepEqual(sum, { decisions: 2, unblocked: 2, askers: 1, minutes: 3, rules: ["“courier” is answered “Yes”"] });
 });
 
 test("evidence lines: a path in backticks, an issue's key, a pull request, else a fact", () => {

@@ -132,7 +132,7 @@ async function endRun(tx: Tx, r: Row, outcome: RunOutcome, fields: Partial<Row> 
 }
 
 /** The issue's "Done when" criteria now, from its description as the API gives it: all of them, past CRITERIA_MAX too. */
-export async function criteriaOf(issueId: string): Promise<string[]> {
+async function criteriaOf(issueId: string): Promise<string[]> {
   const [doc] = await db.select({ doc: document.doc }).from(document).where(eq(document.id, issueId));
   return doc?.doc ? doneWhen(toMarkdown(doc.doc as DocNode)) : [];
 }

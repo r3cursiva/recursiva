@@ -5,7 +5,7 @@
 // WebSocket log. Reads never touch the network: they come from the in-memory pool.
 import type { Role } from "@rsva/policy";
 import type { HistoryEntry, HistoryLevel, InboxEvent, InboxKind, InboxMark, ProjectComment, ProjectHistoryEntry, ProjectSettingEntry, PinRef, SavedView, SidebarGroups, ViewFields } from "@rsva/protocol";
-import type { AssignableRole, Attachment, Comment, Cycle, CyclePatch, DecisionAnswer, DocJSON, Document, GithubLink, Issue, IssuePatch, IssueUpdate, Label, LabelPatch, Project, ProjectCreate, ProjectPatch, RelationType, StateGroup, StatePatch, User, WorkflowState, WorkspaceInfo, WorkspacePatch } from "@rsva/schema/models";
+import type { AssignableRole, Attachment, Comment, Cycle, CyclePatch, Decision, DecisionAnswer, DocJSON, Document, GithubLink, Issue, IssuePatch, IssueUpdate, Label, LabelPatch, Project, ProjectCreate, ProjectPatch, RelationType, StateGroup, StatePatch, User, WorkflowState, WorkspaceInfo, WorkspacePatch } from "@rsva/schema/models";
 
 import type { IssueRelations, IssueShelf } from "./pool.ts";
 
@@ -253,6 +253,8 @@ export interface SyncStore {
   readonly labels: ReadonlyMap<string, Label>;
   readonly cycles: ReadonlyMap<string, Cycle>;
   readonly issues: ReadonlyMap<string, Issue>;
+  /** The questions agents put to people (RSVA-644), open and answered. */
+  readonly decisions: ReadonlyMap<string, Decision>;
   readonly inbox: InboxStore;
   readonly views: ViewsStore;
 

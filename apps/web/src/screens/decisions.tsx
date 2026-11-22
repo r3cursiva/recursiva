@@ -1,7 +1,8 @@
 // The Decisions screen (RSVA-644, the Decisions artboards 1–6 of the Quire canvas): the questions agents wait on the
 // viewer to answer, one card at a time. A digit answers, ↵ takes the recommendation, S skips, O opens the issue, R
-// answers in one's own words, A saves the answer as a rule, Z takes the last answer back within 8 s. An answer is the
-// viewer's reply to the agent's question comment; the agent reads it there. What the agent is doing is not shown here
+// answers in one's own words, A saves the answer as a rule, Z takes the last answer back within 8 s. The questions are
+// the workspace's Decision rows (`rsva ask`); an answer goes through the sync engine, and the server writes it with the
+// reply "Decision: …" that the agent reads. What the agent is doing is not shown here
 // (owner 2026-11-06: agents live in Rex). Desktop layout; the phone's is RSVA-644's follow-up.
 import {
   ArchiveIcon,
@@ -17,8 +18,7 @@ import {
   StackIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { formatAnswer, ruleText, type Answer, type DecisionKind } from "@rsva/protocol/decisions";
-import { isOpenIssue } from "@rsva/schema/models";
+import { isOpenIssue, type Decision, type DecisionKind } from "@rsva/schema/models";
 import { errorText, plural } from "@rsva/schema/util";
 import { Button } from "@rsva/ui/components/button";
 import { Kbd } from "@rsva/ui/components/kbd";
@@ -33,20 +33,20 @@ import { compactAge } from "@rsva/display/time";
 import { reaction } from "mobx";
 import { observer } from "mobx-react-lite";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { answerText, buildQueue, commandOf, entryRule, evidenceOf, Sitting, UNDO_MS, unblockCounts, type Card, type Entry, type Order } from "../lib/decisions.ts";
+import { answerText, buildQueue, canRule, commandOf, evidenceOf, ruleLine, Sitting, UNDO_MS, unblockCounts, type Answer, type Card, type Entry, type Order } from "../lib/decisions.ts";
 import { typedInto } from "../lib/typing.ts";
 import { store } from "../store.ts";
-import { decisions } from "./decisions-state.ts";
+import { rules } from "./decision-rules.ts";
+import { decisions, waitingDecisions } from "./decisions-state.ts";
 import { openIssue } from "./issue-actions.ts";
 import { notice } from "./notice.ts";
 import { IssueStateGlyph } from "./state-glyph.tsx";
 
-/** Posts an answer once its undo window is over: a reply to each question, and the rule when one was asked for. */
+/** Sends an answer once its undo window is over: each question answered, the rule saved with a lone one's answer. */
 function post(e: Entry): void {
-  const ws = decisions.ws;
-  for (const m of e.members) store.addComment(m.issueId, formatAnswer(e.answer), m.commentId);
-  const rule = entryRule(e);
-  if (rule && ws) decisions.saveRule(ws, rule).catch((err: unknown) => notice.show(`The rule was not saved: ${errorText(err)}`));
+  const rule = e.rule && canRule(e.card);
+  for (const m of e.members)
+    store.answerDecision(m.id, "text" in e.answer ? { status: "answered", option: null, text: e.answer.text, ...(rule ? { rule } : {}) } : { status: "answered", option: e.answer.option, ...(rule ? { rule } : {}) });
 }
 
 // One sitting per tab: the answers outlive the screen, so leaving it within the undo window loses nothing.
@@ -60,7 +60,7 @@ addEventListener("pagehide", () => sitting.flush());
 const KIND: Record<DecisionKind, { icon: typeof SealQuestionIcon; one: string; many: string; own: string }> = {
   question: { icon: SealQuestionIcon, one: "Question from", many: "similar questions from", own: "Answer in your own words" },
   close: { icon: ArchiveIcon, one: "Close proposal from", many: "close proposals from", own: "Keep it, and say why" },
-  hand: { icon: RobotIcon, one: "Hand-off plan from", many: "hand-off plans from", own: "Say what to change, then hand it over" },
+  handoff: { icon: RobotIcon, one: "Hand-off plan from", many: "hand-off plans from", own: "Say what to change, then hand it over" },
 };
 const ORDERS = [
   { value: "unblocks", label: "Unblocks most" },
@@ -68,16 +68,19 @@ const ORDERS = [
 ] as const;
 
 const nameOf = (id: string) => store.users.get(id)?.name ?? "an agent";
+/** The key of a decision's issue, as the lists show it. */
+const keyOf = (d: Decision) => {
+  const issue = store.issues.get(d.issueId);
+  return issue ? store.issueKey(issue) : "";
+};
+const projectOf = (d: Decision) => keyOf(d).split("-")[0] ?? "";
 const ago = (iso: string) => {
   const a = compactAge(Date.now() - Date.parse(iso));
   return a === "now" ? "just now" : `${a} ago`;
 };
 
 export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
-  useEffect(() => {
-    void decisions.load(ws, true);
-    void decisions.loadRules(ws).catch(() => {});
-  }, [ws]);
+  useEffect(() => void rules.load(ws), [ws]);
   const [order, setOrder] = useState<Order>("unblocks");
   const [skipped, setSkipped] = useState<string[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -87,7 +90,7 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
   const [rule, setRule] = useState(false);
   const ownRef = useRef<HTMLTextAreaElement>(null);
 
-  const waiting = decisions.waiting;
+  const waiting = waitingDecisions.get();
   const unblocks = unblockCounts(store.issues.values(), (i) => isOpenIssue(i, store.states.get(i.stateId)?.group));
   const queue = buildQueue(waiting, unblocks, order, skipped);
   const card = queue.find((c) => c.id === activeId) ?? queue[0] ?? null;
@@ -106,11 +109,11 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
   };
   const answer = (c: Card, a: Answer) => {
     // What was left out belongs to the group on screen; a lone question is answered whatever was unchecked before.
-    const members = c.members.length > 1 ? c.members.filter((m) => !left.has(m.commentId)) : c.members;
+    const members = c.members.length > 1 ? c.members.filter((m) => !left.has(m.id)) : c.members;
     if (!members.length) return;
     const e = sitting.answer(c, a, rule, members);
     show((queue[at + 1] ?? queue[at - 1])?.id ?? null);
-    const lead = members.length > 1 ? plural(members.length, "issue") : members[0]!.key;
+    const lead = members.length > 1 ? plural(members.length, "issue") : keyOf(members[0]!);
     notice.show(`${answerText(a)}${e.rule ? " · rule saved" : ""}`, undo, { ms: UNDO_MS, kbd: "Z", lead });
   };
   const toggle = (id: string) => setLeft((s) => (s.has(id) ? new Set([...s].filter((x) => x !== id)) : new Set([...s, id])));
@@ -136,12 +139,12 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
         setOwn((t) => t ?? "");
         return requestAnimationFrame(() => ownRef.current?.focus());
       }
-      if (cmd.t === "rule") return card.members.length === 1 && setRule((r) => !r);
+      if (cmd.t === "rule") return canRule(card) && setRule((r) => !r);
       if (cmd.t === "move") {
         if (card.members.length > 1) return setFocus((f) => Math.max(0, Math.min(card.members.length - 1, f + cmd.by)));
         return show(queue[Math.max(0, Math.min(queue.length - 1, at + cmd.by))]?.id ?? null);
       }
-      if (cmd.t === "check") toggle(card.members[focus]!.commentId);
+      if (cmd.t === "check") toggle(card.members[focus]!.id);
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -153,7 +156,7 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
       <header className="flex h-(--topbar) shrink-0 items-center gap-2.5 border-b pr-4 pl-6">
         <SignpostIcon className="size-4 shrink-0 text-ink-2" />
         <h1 className="text-[15px] font-semibold tracking-[-0.01em]">Decisions</h1>
-        <span className="font-mono text-meta text-ink-3">{decisions.open === null ? "" : total ? `${total} waiting` : "all answered"}</span>
+        <span className="font-mono text-meta text-ink-3">{store.status === "loading" ? "" : total ? `${total} waiting` : "all answered"}</span>
         <span className="flex-1" />
         <Segmented variant="quiet" label="Order" options={ORDERS} value={order} onChange={setOrder} />
         <RulesButton ws={ws} />
@@ -185,7 +188,7 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
                 rule={rule}
                 onRule={setRule}
               />
-            ) : decisions.open === null ? (
+            ) : store.status === "loading" ? (
               <Waiting />
             ) : (
               <Empty />
@@ -198,24 +201,14 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
   );
 });
 
-/** Loading, or the request failed: said so, never as an empty queue. */
-const Waiting = observer(function Waiting() {
-  if (!decisions.error)
-    return (
-      <p className="mx-auto mt-[70px] flex max-w-160 items-center gap-2 text-body text-ink-3">
-        <Spinner className="size-3.5" /> Loading the questions…
-      </p>
-    );
+/** The workspace's copy is still loading: said so, never as an empty queue. */
+function Waiting() {
   return (
-    <div className="mx-auto mt-[70px] max-w-160">
-      <h2 className="text-[17px] font-semibold">The questions did not load</h2>
-      <p className="mt-2 text-body text-ink-2">{decisions.error}</p>
-      <Button variant="outline" className="mt-4" onClick={() => decisions.ws && void decisions.load(decisions.ws, true)}>
-        Try again
-      </Button>
-    </div>
+    <p className="mx-auto mt-[70px] flex max-w-160 items-center gap-2 text-body text-ink-3">
+      <Spinner className="size-3.5" /> Loading the questions…
+    </p>
   );
-});
+}
 
 function Progress({ done, left }: { done: number; left: number }) {
   return (
@@ -233,7 +226,7 @@ function Progress({ done, left }: { done: number; left: number }) {
 const QueueRow = observer(function QueueRow({ card, on, skipped, onClick }: { card: Card; on: boolean; skipped: boolean; onClick: () => void }) {
   const Icon = card.members.length > 1 ? StackIcon : KIND[card.kind].icon;
   const m = card.members[0]!;
-  const what = card.kind === "close" ? `close${card.members.length > 1 ? ` ${card.members.length}` : ""}?` : card.kind === "hand" ? "hand off?" : `unblocks ${card.unblocks}`;
+  const what = card.kind === "close" ? `close${card.members.length > 1 ? ` ${card.members.length}` : ""}?` : card.kind === "handoff" ? "hand off?" : `unblocks ${card.unblocks}`;
   return (
     <button
       type="button"
@@ -246,12 +239,12 @@ const QueueRow = observer(function QueueRow({ card, on, skipped, onClick }: { ca
     >
       <Icon className={cn("mt-0.5 size-3.5", on ? "text-ink" : "text-ink-3")} />
       <span className="flex min-w-0 flex-col gap-1">
-        <span className="font-mono text-[11px] text-ink-3">{card.members.length > 1 ? `${card.members.length} alike` : m.key}</span>
+        <span className="font-mono text-[11px] text-ink-3">{card.members.length > 1 ? `${card.members.length} alike` : keyOf(m)}</span>
         <span className={cn("line-clamp-2 text-[13px] leading-[1.35]", skipped ? "text-ink-3" : "text-ink")}>{card.question}</span>
         <span className="flex gap-2.5 font-mono text-[11px] whitespace-nowrap text-ink-3">
           <span className={card.unblocks ? "text-ink-2" : undefined}>{what}</span>
           <span className="truncate">
-            {nameOf(m.by)} · {compactAge(Date.now() - Date.parse(card.at))}
+            {nameOf(m.askedById)} · {compactAge(Date.now() - Date.parse(card.at))}
           </span>
         </span>
       </span>
@@ -279,7 +272,7 @@ const Answered = observer(function Answered({ onUndo }: { onUndo: () => void }) 
         .reverse()
         .map((e, i) => (
           <div key={i} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 px-2.5 py-[5px] text-[12.5px] text-ink-3">
-            <span className="font-mono text-[11px] leading-[1.5]">{e.members.length > 1 ? `×${e.members.length}` : e.members[0]!.key}</span>
+            <span className="font-mono text-[11px] leading-[1.5]">{e.members.length > 1 ? `×${e.members.length}` : keyOf(e.members[0]!)}</span>
             <span className="truncate text-ink-2">{e.card.group ? `${e.card.group}: ${answerText(e.answer)}` : answerText(e.answer)}</span>
             {e.rule && <span className="col-start-2 text-[11.5px]">saved as a rule</span>}
           </div>
@@ -293,7 +286,7 @@ interface CardProps {
   pos: string;
   left: ReadonlySet<string>;
   focus: number;
-  onToggle: (commentId: string) => void;
+  onToggle: (id: string) => void;
   onAnswer: (a: Answer) => void;
   own: string | null;
   ownRef: RefObject<HTMLTextAreaElement | null>;
@@ -309,12 +302,12 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
   const Icon = group ? StackIcon : kind.icon;
   const issue = store.issues.get(m.issueId);
   const blocked = group ? [] : [...store.issues.values()].filter((i) => i.blockedByIds.includes(m.issueId) && isOpenIssue(i, store.states.get(i.stateId)?.group));
-  const ruleOn = !group && card.options.length > 0;
+  const ruleOn = canRule(card);
   return (
     <article className="max-w-[980px] animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
       <div className="flex items-center gap-[7px] text-[12.5px] text-ink-2">
         <Icon className="size-3.5" />
-        <span>{group ? `${card.members.length} ${kind.many} ${nameOf(m.by)}` : `${kind.one} ${nameOf(m.by)}`}</span>
+        <span>{group ? `${card.members.length} ${kind.many} ${nameOf(m.askedById)}` : `${kind.one} ${nameOf(m.askedById)}`}</span>
         <span className="text-faint">·</span>
         <span>asked {ago(card.at)}</span>
         <span className="flex-1" />
@@ -322,7 +315,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
       </div>
       {!group && (
         <div className="mt-3.5 flex items-center gap-2.5">
-          <span className="font-mono text-id text-ink-2">{m.key}</span>
+          <span className="font-mono text-id text-ink-2">{keyOf(m)}</span>
           <span className="min-w-0 truncate text-[14px] font-medium">{issue?.title ?? ""}</span>
           {issue && (
             <Button variant="ghost" size="sm" onClick={() => openIssue(issue)}>
@@ -349,7 +342,6 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
       <div className={cn("mt-5 grid items-start gap-8", group ? "grid-cols-[minmax(0,640px)]" : "grid-cols-[minmax(0,1fr)_290px]")}>
         <div>
           {group && <Members card={card} left={left} focus={focus} onToggle={onToggle} />}
-          {card.kind === "hand" && !group && m.doneWhen.length > 0 && <DoneWhen items={m.doneWhen} />}
           <div className="flex flex-col gap-1.5">
             {card.options.map((o, i) => (
               <button
@@ -391,7 +383,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
                   Answer the same way next time <Kbd className="ml-1">A</Kbd>
                 </span>
                 <span className="text-[12px] leading-[1.45] text-ink-3">
-                  {ruleText({ project: m.key.split("-")[0]!, question: m.question, answer: card.options[card.recommended]!.label })} Saved with the answer; listed in Rules.
+                  In {projectOf(m)}, {ruleLine(m.topic!, card.options[card.recommended]!.label)} from now on, without asking you. Saved with the answer; listed in Rules.
                 </span>
               </span>
             </label>
@@ -412,7 +404,7 @@ function OwnWords({ card, text, ownRef, onChange, onSend }: { card: Card; text: 
         autoFocus
         value={text}
         aria-label="Your answer"
-        placeholder={card.kind === "close" ? "Why it should stay open" : `Your answer; posted as a comment on ${card.members.length > 1 ? "each issue" : card.members[0]!.key}`}
+        placeholder={card.kind === "close" ? "Why it should stay open" : `Your answer; posted as a comment on ${card.members.length > 1 ? "each issue" : keyOf(card.members[0]!)}`}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -440,25 +432,25 @@ function OwnWords({ card, text, ownRef, onChange, onSend }: { card: Card; text: 
 }
 
 function Members({ card, left, focus, onToggle }: { card: Card; left: ReadonlySet<string>; focus: number; onToggle: (id: string) => void }) {
-  const checked = card.members.filter((m) => !left.has(m.commentId)).length;
+  const checked = card.members.filter((m) => !left.has(m.id)).length;
   return (
     <div className="mb-3.5 flex flex-col gap-px">
       {card.members.map((m, i) => {
-        const on = !left.has(m.commentId);
+        const on = !left.has(m.id);
         const issue = store.issues.get(m.issueId);
         return (
           <div
-            key={m.commentId}
+            key={m.id}
             role="checkbox"
             aria-checked={on}
             tabIndex={-1}
-            onClick={() => onToggle(m.commentId)}
+            onClick={() => onToggle(m.id)}
             className={cn("grid h-9 cursor-pointer grid-cols-[16px_auto_minmax(0,1fr)] items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-row-hover", i === focus && "bg-row-selected")}
           >
             <span className={cn("grid size-4 place-items-center rounded-sm", on ? "bg-ink text-ground" : "shadow-[inset_0_0_0_1.5px_var(--color-ink-3)] text-transparent")}>
               <CheckIcon className="size-[11px]" weight="bold" />
             </span>
-            <span className="font-mono text-id text-ink-2">{m.key}</span>
+            <span className="font-mono text-id text-ink-2">{keyOf(m)}</span>
             <span className={cn("truncate", !on && "text-ink-3")}>{issue?.title ?? m.question}</span>
           </div>
         );
@@ -470,23 +462,6 @@ function Members({ card, left, focus, onToggle }: { card: Card; left: ReadonlySe
           <Kbd>K</Kbd> move · <Kbd>X</Kbd> check
         </span>
       </p>
-    </div>
-  );
-}
-
-function DoneWhen({ items }: { items: string[] }) {
-  return (
-    <div className="mb-3.5 rounded-[10px] bg-panel px-3.5 pt-3 pb-2 shadow-[inset_0_0_0_1px_var(--color-rule-soft)]">
-      <div className="mb-1.5 flex items-baseline gap-2.5">
-        <span className="eyebrow">Done when</span>
-        <span className="text-[12px] text-ink-3">from the issue’s description</span>
-      </div>
-      {items.map((t, i) => (
-        <div key={i} className="grid grid-cols-[18px_minmax(0,1fr)] gap-1.5 py-[5px] text-[13px] leading-[1.45]">
-          <i className="font-mono text-[11px] leading-[1.75] text-ink-3 not-italic">{i + 1}</i>
-          <span>{t}</span>
-        </div>
-      ))}
     </div>
   );
 }
@@ -585,35 +560,33 @@ const Empty = observer(function Empty() {
 
 /** Rules: every saved rule of the workspace, the viewer's own with Remove. */
 const RulesButton = observer(function RulesButton({ ws }: { ws: string }) {
-  const rules = decisions.rules;
+  const list = rules.list;
   return (
     <Popover>
       <PopoverTrigger
         render={
           <Button variant="ghost" size="sm">
-            <SlidersHorizontalIcon /> Rules <span className="font-mono text-[11px] text-ink-3">{rules?.length ?? ""}</span>
+            <SlidersHorizontalIcon /> Rules <span className="font-mono text-[11px] text-ink-3">{list?.length ?? ""}</span>
           </Button>
         }
       />
       <PopoverContent align="end" sideOffset={6} className="w-[380px] gap-2 p-3">
         <PopoverTitle className="text-caption font-medium">Rules</PopoverTitle>
-        {rules === null ? (
+        {rules.error && list === null ? (
+          <p className="text-caption text-ink-3">The rules did not load: {rules.error}</p>
+        ) : list === null ? (
           <p className="text-caption text-ink-3">Loading…</p>
-        ) : rules.length === 0 ? (
-          <p className="text-caption text-ink-3">None yet. “Answer the same way next time” on a card saves one; agents of the workspace read them.</p>
+        ) : list.length === 0 ? (
+          <p className="text-caption text-ink-3">None yet. “Answer the same way next time” on a question with a topic saves one; agents read them, and a question on the same topic in the project is answered by it.</p>
         ) : (
           <ul className="flex max-h-80 flex-col gap-1 overflow-auto">
-            {rules.map((r) => (
+            {list.map((r) => (
               <li key={r.id} className="flex items-start gap-2 rounded-md px-1 py-1 text-caption">
-                <span className="min-w-0 flex-1 leading-[1.45]">{ruleText(r)}</span>
+                <span className="min-w-0 flex-1 leading-[1.45]">
+                  In {r.project}, {ruleLine(r.topic, r.answer)}
+                </span>
                 {r.mine && (
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Remove the rule"
-                    title="Remove"
-                    onClick={() => decisions.removeRule(ws, r.id).catch((e: unknown) => notice.show(errorText(e)))}
-                  >
+                  <Button variant="ghost" size="icon-sm" aria-label="Remove the rule" title="Remove" onClick={() => rules.remove(ws, r.id).catch((e: unknown) => notice.show(errorText(e)))}>
                     <XIcon />
                   </Button>
                 )}

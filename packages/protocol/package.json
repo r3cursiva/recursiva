@@ -6,7 +6,6 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./decisions": "./src/decisions.ts",
     "./home": "./src/home.ts",
     "./my-work": "./src/my-work.ts",
     "./similar": "./src/similar.ts"

@@ -63,7 +63,7 @@ const line = (s: string) => s.replace(/\s+/g, " ").trim();
 const KIND_HEAD = { question: "Question", close: "Close proposal", handoff: "Hand-off" } as const;
 
 /** The comment that mirrors a question in the issue's thread: the question, the options, the recommendation, the evidence. */
-export function askComment(d: Pick<Decision, "kind" | "question" | "options" | "recommended" | "evidence">): string {
+function askComment(d: Pick<Decision, "kind" | "question" | "options" | "recommended" | "evidence">): string {
   const options = d.options.map((o, i) => `${i + 1}. ${line(o.label)}${o.detail ? ` — ${line(o.detail)}` : ""}${i === d.recommended ? " (recommended)" : ""}`);
   const why = d.options[d.recommended]?.why;
   return [
@@ -78,7 +78,7 @@ export function askComment(d: Pick<Decision, "kind" | "question" | "options" | "
 }
 
 /** The reply that answers it. */
-export const answerComment = (words: string, rule?: { topic: string; by: string }): string =>
+const answerComment = (words: string, rule?: { topic: string; by: string }): string =>
   `**Decision:** ${line(words)}${rule ? `\n\nAnswered by the rule for “${line(rule.topic)}” that ${line(rule.by)} saved.` : ""}`;
 
 const projectOf = async (tx: Tx, workspaceId: string, issueId: string): Promise<string> => {

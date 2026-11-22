@@ -16,12 +16,10 @@ import { Button } from "@rsva/ui/components/button";
 import { keys } from "@rsva/ui/lib/keys";
 import { cn } from "@rsva/ui/lib/utils";
 import { observer } from "mobx-react-lite";
-import { useEffect } from "react";
 import { localToday } from "@rsva/query";
 import { formatDate } from "@rsva/display/time";
 import { cycleShort, daysLeft } from "../lib/cycles.ts";
-import { afterPaint } from "../perf.ts";
-import { decisions } from "./decisions-state.ts";
+import { waitingDecisions } from "./decisions-state.ts";
 import { pinTargets, routePin, type PinTarget } from "../lib/pins.ts";
 import { viewCount } from "../lib/views.ts";
 import { paths, router } from "../router.ts";
@@ -169,18 +167,9 @@ const TriageItem = observer(function TriageItem({ ws }: { ws: string }) {
   );
 });
 
-/**
- * Decisions (RSVA-644): the questions agents wait on the viewer to answer. Its count is asked for after the sidebar has
- * painted, and again when the tab comes back after a while: questions are comments, not in the snapshot.
- */
+/** Decisions (RSVA-644): the questions agents wait on the viewer to answer, counted from the workspace's own copy. */
 const DecisionsItem = observer(function DecisionsItem({ ws }: { ws: string }) {
-  useEffect(() => {
-    afterPaint(() => void decisions.load(ws));
-    const back = () => document.visibilityState === "visible" && void decisions.load(ws);
-    document.addEventListener("visibilitychange", back);
-    return () => document.removeEventListener("visibilitychange", back);
-  }, [ws]);
-  const n = decisions.ws === ws ? decisions.waiting.length : 0;
+  const n = waitingDecisions.get().length;
   return (
     <Link
       href={paths.decisions(ws)}

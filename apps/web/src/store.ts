@@ -195,6 +195,7 @@ class Facade implements SyncStore {
   get labels() { return current.labels; }
   get cycles() { return current.cycles; }
   get issues() { return current.issues; }
+  get decisions() { return current.decisions; }
   get inbox() { return current.inbox; }
   get views() { return current.views; }
   // Any open engine's: one sending a queue in the background has nobody else to tell.

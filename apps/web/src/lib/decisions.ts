@@ -1,19 +1,22 @@
 // The Decisions screen's rules (RSVA-644), apart from the screen so they are tested without a browser: the queue's
 // cards and their order, the keys, and the sitting, which holds each answer for an undo window before it is posted.
 //
-// Compared for the undo: post at once and delete the comment on Undo (the agent may read the answer in between, and a
-// tombstone stays in the thread), or hold the answer for the window and post it after (nothing reaches the agent that
-// was taken back). Held: an answer is a message to someone who acts on it. Leaving the page posts what is held.
-import { ruleText, type Answer, type DecisionKind, type DecisionOption, type OpenDecision } from "@rsva/protocol/decisions";
-import { parseIssueKey } from "@rsva/schema/models";
+// Compared for the undo: send at once and take it back with the server's undo (a round trip each way, and the agent
+// may read the answer in between), or hold the answer here for the window and send it after (an undo is instant and
+// offline, and nothing reaches the agent that was taken back). Held; the server's undo (DECISION_UNDO_MS) is for the
+// API and the CLI. Leaving the page sends what is held.
+import { DECISION_UNDO_MS, parseIssueKey, type Decision, type DecisionKind, type DecisionOption } from "@rsva/schema/models";
 import { makeAutoObservable, observableShallow } from "mobx";
 
 /** How long an answer can be taken back (the artboard's Undo, owner's issue RSVA-644). */
-export const UNDO_MS = 8000;
+export const UNDO_MS = DECISION_UNDO_MS;
 
-/** One card of the queue: one question, or close proposals with the same group and options answered together. */
+/** A person's answer: one of the options, or their own words. */
+export type Answer = { option: number; label: string } | { text: string };
+
+/** One card of the queue: one question, or questions of one kind and topic with the same options, answered together. */
 export interface Card {
-  /** The question's comment, or "g:" and the group's key. */
+  /** The decision's id, or "g:" and the group's key. */
   id: string;
   kind: DecisionKind;
   question: string;
@@ -21,8 +24,8 @@ export interface Card {
   recommended: number;
   why: string;
   /** The questions it answers, one unless it is a group; oldest first. */
-  members: OpenDecision[];
-  /** The group's name; null for a single question. */
+  members: Decision[];
+  /** The group's topic; null for a single question. */
   group: string | null;
   /** Open issues that wait on its issues (blocked by them), in all and for each member. */
   unblocks: number;
@@ -33,40 +36,46 @@ export interface Card {
 
 export type Order = "unblocks" | "oldest";
 
-const groupKey = (d: OpenDecision) => `${d.group}\n${d.options.map((o) => o.label).join("\n")}`;
+const groupKey = (d: Decision) => `${d.kind}\n${d.topic}\n${d.options.map((o) => o.label).join("\n")}`;
+const reason = (d: Decision) => d.options[d.recommended]?.why ?? "";
+const GROUP_QUESTION: Record<DecisionKind, (topic: string, n: number) => string> = {
+  question: (t, n) => `${t}: ${n} questions alike`,
+  close: (t, n) => `${t}: close ${n} issues?`,
+  handoff: (t, n) => `${t}: hand ${n} issues to an agent?`,
+};
 
 /**
- * The queue: close proposals that name the same group with the same options make one card, everything else a card of
- * its own; the cards that unblock most first (ties: the oldest), or the oldest first. `skipped` go last, in the order
+ * The queue: questions of one kind with the same topic and options make one card (what makes them alike is the agent's
+ * topic, never guessed from the words), everything else a card of its own; the cards that unblock most first (ties: the oldest), or the oldest first. `skipped` go last, in the order
  * they were skipped.
  */
-export function buildQueue(open: readonly OpenDecision[], unblocksOf: (issueId: string) => number, order: Order, skipped: readonly string[] = []): Card[] {
-  const groups = new Map<string, OpenDecision[]>();
-  for (const d of open) if (d.kind === "close" && d.group) groups.set(groupKey(d), [...(groups.get(groupKey(d)) ?? []), d]);
+export function buildQueue(open: readonly Decision[], unblocksOf: (issueId: string) => number, order: Order, skipped: readonly string[] = []): Card[] {
+  const groups = new Map<string, Decision[]>();
+  for (const d of open) if (d.topic) groups.set(groupKey(d), [...(groups.get(groupKey(d)) ?? []), d]);
   const cards: Card[] = [];
   const grouped = new Set<string>();
   for (const [key, members] of groups) {
     if (members.length < 2) continue;
     const first = members[0]!;
-    for (const m of members) grouped.add(m.commentId);
-    const sorted = [...members].sort((a, b) => a.at.localeCompare(b.at));
+    for (const m of members) grouped.add(m.id);
+    const sorted = [...members].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     cards.push({
       id: `g:${key}`,
-      kind: "close",
-      question: `${first.group}: close ${members.length} issues?`,
+      kind: first.kind,
+      question: GROUP_QUESTION[first.kind](first.topic!, members.length),
       options: first.options,
       recommended: first.recommended,
-      why: first.why,
+      why: reason(first),
       members: sorted,
-      group: first.group,
+      group: first.topic,
       unblocks: sorted.reduce((n, m) => n + unblocksOf(m.issueId), 0),
       each: sorted.map((m) => unblocksOf(m.issueId)),
-      at: sorted[0]!.at,
+      at: sorted[0]!.createdAt,
     });
   }
   for (const d of open) {
-    if (grouped.has(d.commentId)) continue;
-    cards.push({ id: d.commentId, kind: d.kind, question: d.question, options: d.options, recommended: d.recommended, why: d.why, members: [d], group: null, unblocks: unblocksOf(d.issueId), each: [unblocksOf(d.issueId)], at: d.at });
+    if (grouped.has(d.id)) continue;
+    cards.push({ id: d.id, kind: d.kind, question: d.question, options: d.options, recommended: d.recommended, why: reason(d), members: [d], group: null, unblocks: unblocksOf(d.issueId), each: [unblocksOf(d.issueId)], at: d.createdAt });
   }
   cards.sort((a, b) => (order === "unblocks" ? b.unblocks - a.unblocks : 0) || a.at.localeCompare(b.at));
   const later = skipped.filter((id) => cards.some((c) => c.id === id));
@@ -112,24 +121,29 @@ export function commandOf(e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" |
 export interface Entry {
   card: Card;
   /** The questions it answers: a group's checked ones. */
-  members: OpenDecision[];
+  members: Decision[];
   answer: Answer;
   /** "Answer the same way next time". */
   rule: boolean;
   at: number;
 }
 
-/** What posting an entry does: a reply to each question, and the rule. The screen's is the store's comments and the API. */
+/** What sending an entry does: the screen's answers each question through the sync engine, which writes its reply. */
 export type Post = (e: Entry) => void;
 
 /** The answer's words: the option's label, or the person's own in quotes. */
 export const answerText = (a: Answer): string => ("text" in a ? `“${a.text}”` : a.label);
 
-/** The rule an entry saves, as one sentence; null when it saves none. */
-export function entryRule(e: Pick<Entry, "card" | "answer" | "rule">): { project: string; question: string; answer: string } | null {
-  if (!e.rule || "text" in e.answer || e.card.members.length !== 1) return null;
-  const m = e.card.members[0]!;
-  return { project: m.key.split("-")[0]!, question: m.question, answer: e.answer.label };
+/** Whether "same next time" can save a rule for the card: one question, with a topic to answer by. */
+export const canRule = (card: Card): boolean => card.members.length === 1 && !!card.members[0]!.topic;
+
+/** A rule as one line: the topic and its answer (the screen puts the project before it). */
+export const ruleLine = (topic: string, answer: string): string => `“${topic}” is answered “${answer}”`;
+
+/** The rule an entry saves: its topic and answer; null when it saves none. */
+function entryRule(e: Pick<Entry, "card" | "answer" | "rule">): { topic: string; answer: string } | null {
+  if (!e.rule || !canRule(e.card)) return null;
+  return { topic: e.card.members[0]!.topic!, answer: "text" in e.answer ? e.answer.text : e.answer.label };
 }
 
 /** The sitting's summary: computed from what was answered, nothing estimated. */
@@ -166,7 +180,7 @@ export class Sitting {
     makeAutoObservable<Sitting, "sent" | "timers" | "post" | "clock">(this, { entries: observableShallow, sent: observableShallow, timers: false, post: false, clock: false });
   }
 
-  answer(card: Card, answer: Answer, rule: boolean, members: OpenDecision[] = card.members): Entry {
+  answer(card: Card, answer: Answer, rule: boolean, members: Decision[] = card.members): Entry {
     const e: Entry = { card, members, answer, rule: rule && !!entryRule({ card, answer, rule }), at: this.clock.now() };
     this.entries.push(e);
     this.timers.set(
@@ -197,7 +211,7 @@ export class Sitting {
 
   /** The questions answered this sitting, held or posted. */
   get answered(): Set<string> {
-    return new Set(this.entries.flatMap((e) => e.members.map((m) => m.commentId)));
+    return new Set(this.entries.flatMap((e) => e.members.map((m) => m.id)));
   }
 
   get summary(): Summary {
@@ -206,11 +220,11 @@ export class Sitting {
     return {
       decisions: members.length,
       unblocked: this.entries.reduce((n, e) => n + e.card.members.reduce((k, m, i) => k + (e.members.includes(m) ? e.card.each[i]! : 0), 0), 0),
-      askers: new Set(members.map((m) => m.by)).size,
+      askers: new Set(members.map((m) => m.askedById)).size,
       minutes: times.length > 1 ? Math.round((Math.max(...times) - Math.min(...times)) / 60_000) : 0,
       rules: this.entries.flatMap((e) => {
         const r = entryRule(e);
-        return r ? [ruleText(r)] : [];
+        return r ? [ruleLine(r.topic, r.answer)] : [];
       }),
     };
   }
