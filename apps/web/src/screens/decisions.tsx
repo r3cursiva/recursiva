@@ -34,11 +34,13 @@ import { reaction, when } from "mobx";
 import { observer } from "mobx-react-lite";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { answerText, buildQueue, canRule, commandOf, evidenceOf, relationsOf, ruleLine, Sitting, UNDO_MS, unblockCounts, type Answer, type Card, type Entry, type Order } from "../lib/decisions.ts";
+import { normKey } from "../lib/step-keys.ts";
 import { typedInto } from "../lib/typing.ts";
 import { currentWs, store } from "../store.ts";
 import { rules } from "./decision-rules.ts";
 import { decisions, keepHeld, waitingDecisions } from "./decisions-state.ts";
-import { openIssue } from "./issue-actions.ts";
+import { IssueDetail } from "./issue-detail.tsx";
+import { paneKeys } from "./list-keys.ts";
 import { notice } from "./notice.ts";
 import { IssueStateGlyph } from "./state-glyph.tsx";
 
@@ -105,6 +107,8 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
   const [left, setLeft] = useState<ReadonlySet<string>>(() => new Set());
   const [own, setOwn] = useState<string | null>(null);
   const [rule, setRule] = useState(false);
+  // The card's issue open beside it (O): read without leaving the queue; the issue has the keys but the digits.
+  const [reading, setReading] = useState(false);
   const ownRef = useRef<HTMLTextAreaElement>(null);
 
   const waiting = waitingDecisions.get();
@@ -112,6 +116,8 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
   const queue = buildQueue(waiting, unblocks, order, skipped);
   const card = queue.find((c) => c.id === activeId) ?? queue[0] ?? null;
   const at = card ? queue.indexOf(card) : -1;
+  const read = reading && card?.members.length === 1 ? store.issues.get(card.members[0]!.issueId) : undefined;
+  const readProject = read && store.projects.get(read.projectId);
 
   const show = (id: string | null) => {
     setActiveId(id);
@@ -119,6 +125,7 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
     setLeft(new Set());
     setOwn(null);
     setRule(false);
+    setReading(false);
   };
   const undo = () => {
     const e = sitting.undo();
@@ -140,7 +147,13 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
       if (e.defaultPrevented || typedInto(e)) return;
       // Enter on a focused button or link (the toast's Undo, a queue row) presses it; it answers nothing here.
       const onControl = e.target instanceof Element && !!e.target.closest("button, a, [role=button], [role=checkbox]");
-      const cmd = commandOf(e, card, onControl);
+      const cmd = commandOf(e, card, onControl, !!read);
+      // Beside the open issue the card keeps a digit and Z; Esc closes the issue, S, P, A and L are its pickers, as
+      // beside a list.
+      if (read && !cmd) {
+        if (paneKeys(e, normKey(e), { leave: () => setReading(false), issue: read })) e.preventDefault();
+        return;
+      }
       if (!cmd) return;
       e.preventDefault();
       if (cmd.t === "undo") return notice.undoFor ? notice.runUndo() : undo();
@@ -150,16 +163,10 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
         setSkipped((s) => [...s.filter((x) => x !== card.id), card.id]);
         return show((queue[at + 1] ?? queue[0])?.id ?? null);
       }
-      if (cmd.t === "open") {
-        const issue = store.issues.get(card.members[0]!.issueId);
-        return issue && openIssue(issue);
-      }
+      if (cmd.t === "open") return setReading(true);
       if (cmd.t === "own") {
         // A hand-off is changed in the issue: its Done when is the issue's to edit, not an answer's words.
-        if (card.kind === "handoff" && card.members.length === 1) {
-          const issue = store.issues.get(card.members[0]!.issueId);
-          return issue && openIssue(issue);
-        }
+        if (card.kind === "handoff" && card.members.length === 1) return setReading(true);
         setOwn((t) => t ?? "");
         return requestAnimationFrame(() => ownRef.current?.focus());
       }
@@ -186,7 +193,7 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
         <RulesButton ws={ws} />
       </header>
       <div className="flex min-h-0 flex-1">
-        <aside aria-label="Queue" className="flex w-[344px] shrink-0 flex-col border-r border-rule-soft bg-sidebar max-md:hidden">
+        <aside aria-label="Queue" className={cn("flex w-[344px] shrink-0 flex-col border-r border-rule-soft bg-sidebar max-md:hidden", read && "hidden")}>
           {(card || sitting.entries.length > 0) && <Progress done={sitting.summary.decisions} left={total} />}
           <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-3">
             {queue.map((c) => (
@@ -211,6 +218,8 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
                 onOwn={setOwn}
                 rule={rule}
                 onRule={setRule}
+                narrow={!!read}
+                onRead={() => setReading(true)}
               />
             ) : store.status === "loading" ? (
               <Waiting />
@@ -220,6 +229,11 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
           </div>
           {card && <KeyLine max={card.options.length} />}
         </section>
+        {read && readProject && (
+          <aside aria-label="Issue" className="flex w-[min(48%,640px)] shrink-0 flex-col border-l border-rule-soft max-md:hidden">
+            <IssueDetail key={read.id} ws={ws} project={readProject} issue={read} inList onClose={() => setReading(false)} />
+          </aside>
+        )}
       </div>
     </main>
   );
@@ -317,9 +331,13 @@ interface CardProps {
   onOwn: (text: string | null) => void;
   rule: boolean;
   onRule: (on: boolean) => void;
+  /** The issue is open beside the card: the evidence goes under the options. */
+  narrow: boolean;
+  /** Opens the card's issue beside it. */
+  onRead: () => void;
 }
 
-const CardView = observer(function CardView({ card, pos, left, focus, onToggle, onAnswer, own, ownRef, onOwn, rule, onRule }: CardProps) {
+const CardView = observer(function CardView({ card, pos, left, focus, onToggle, onAnswer, own, ownRef, onOwn, rule, onRule, narrow, onRead }: CardProps) {
   const group = card.members.length > 1;
   const m = card.members[0]!;
   const kind = KIND[card.kind];
@@ -343,7 +361,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
           <span className="font-mono text-id text-ink-2">{keyOf(m)}</span>
           <span className="min-w-0 truncate text-[14px] font-medium">{issue?.title ?? ""}</span>
           {issue && (
-            <Button variant="ghost" size="sm" onClick={() => openIssue(issue)}>
+            <Button variant="ghost" size="sm" onClick={onRead}>
               <ArrowSquareOutIcon /> Open issue <Kbd>O</Kbd>
             </Button>
           )}
@@ -366,7 +384,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
           ))}
         </p>
       )}
-      <div className={cn("mt-5 grid items-start gap-8", group ? "grid-cols-[minmax(0,640px)]" : "grid-cols-[minmax(0,1fr)_290px]")}>
+      <div className={cn("mt-5 grid items-start gap-8", group ? "grid-cols-[minmax(0,640px)]" : narrow ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_290px]")}>
         <div>
           {group && <Members card={card} left={left} focus={focus} onToggle={onToggle} />}
           {card.kind === "handoff" && !group && m.criteria.length > 0 && <DoneWhen items={m.criteria} />}
@@ -395,7 +413,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
               </button>
             ))}
             {own === null ? (
-              <button type="button" onClick={() => (card.kind === "handoff" && !group ? issue && openIssue(issue) : onOwn(""))} className="grid w-full cursor-pointer grid-cols-[22px_minmax(0,1fr)] items-start gap-3 rounded-[10px] py-2 pr-3.5 pl-3 text-left hover:bg-row-hover">
+              <button type="button" onClick={() => (card.kind === "handoff" && !group ? onRead() : onOwn(""))} className="grid w-full cursor-pointer grid-cols-[22px_minmax(0,1fr)] items-start gap-3 rounded-[10px] py-2 pr-3.5 pl-3 text-left hover:bg-row-hover">
                 <Kbd className="mt-px justify-self-center">R</Kbd>
                 <span className="text-[13px] text-ink-2">{group ? "Answer them in your own words" : kind.own}</span>
               </button>

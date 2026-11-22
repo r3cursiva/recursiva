@@ -136,15 +136,17 @@ export type Command =
 
 /**
  * The screen's keys (the artboard's key line): digits answer, ↵ the recommendation, S O R A Z, J K move, X checks in a
- * group. `onControl`: the focus is on a button or a link, whose own Enter (and Space) it keeps.
+ * group. `onControl`: the focus is on a button or a link, whose own Enter (and Space) it keeps. `reading`: the card's
+ * issue is open beside it and has the keys but a digit and Z, so that S, A, ↵ and the rest are the issue's there.
  */
-export function commandOf(e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">, card: Card | null, onControl = false): Command | null {
+export function commandOf(e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">, card: Card | null, onControl = false, reading = false): Command | null {
   if (e.metaKey || e.ctrlKey || e.altKey) return null;
   if (onControl && (e.key === "Enter" || e.key === " ")) return null;
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k === "z") return { t: "undo" };
   if (!card) return null;
   if (/^[1-9]$/.test(k)) return Number(k) <= card.options.length ? { t: "answer", option: Number(k) - 1 } : null;
+  if (reading) return null;
   if (k === "Enter" && !e.shiftKey) return { t: "answer", option: card.recommended };
   if (k === "s") return { t: "skip" };
   if (k === "o") return card.members.length === 1 ? { t: "open" } : null;

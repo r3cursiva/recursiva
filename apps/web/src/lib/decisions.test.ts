@@ -52,6 +52,14 @@ test("unblocks counts the open issues blocked by an issue", () => {
   assert.deepEqual([of("x"), of("y"), of("z")], [2, 1, 0]);
 });
 
+test("beside the open issue the card keeps a digit and Z; the other keys are the issue's", () => {
+  const card = buildQueue([ask(1)], () => 0, "oldest")[0]!;
+  const key = (k: string) => commandOf({ key: k, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false }, card, false, true);
+  assert.deepEqual(key("2"), { t: "answer", option: 1 });
+  assert.deepEqual(key("z"), { t: "undo" });
+  for (const k of ["Enter", "s", "o", "r", "a", "j", "k"]) assert.equal(key(k), null, k);
+});
+
 test("a card's issue shows what blocks it, what it duplicates and what is related from either side, each once", () => {
   const i = (id: string, extra: Partial<{ blockedByIds: string[]; relatedIds: string[]; duplicateOfId: string | null }> = {}) => ({ id, blockedByIds: [], relatedIds: [], duplicateOfId: null, ...extra });
   const all = [i("a", { blockedByIds: ["b"], relatedIds: ["b", "c", "gone"], duplicateOfId: "d" }), i("b"), i("c"), i("d"), i("e", { relatedIds: ["a"] }), i("f")];
