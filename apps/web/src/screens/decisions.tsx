@@ -7,7 +7,6 @@
 import {
   ArchiveIcon,
   ArrowSquareOutIcon,
-  CheckIcon,
   CodeIcon,
   DatabaseIcon,
   GitPullRequestIcon,
@@ -18,7 +17,8 @@ import {
   StackIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { isOpenIssue, type Decision, type DecisionKind } from "@rsva/schema/models";
+import { HANDOFF_OPTION, isOpenIssue, type Decision, type DecisionAnswer, type DecisionKind } from "@rsva/schema/models";
+import { Checkbox } from "@rsva/ui/components/checkbox";
 import { errorText, plural } from "@rsva/schema/util";
 import { Button } from "@rsva/ui/components/button";
 import { Kbd } from "@rsva/ui/components/kbd";
@@ -30,23 +30,37 @@ import { Textarea } from "@rsva/ui/components/textarea";
 import { keys } from "@rsva/ui/lib/keys";
 import { cn } from "@rsva/ui/lib/utils";
 import { compactAge } from "@rsva/display/time";
-import { reaction } from "mobx";
+import { reaction, when } from "mobx";
 import { observer } from "mobx-react-lite";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { answerText, buildQueue, canRule, commandOf, evidenceOf, ruleLine, Sitting, UNDO_MS, unblockCounts, type Answer, type Card, type Entry, type Order } from "../lib/decisions.ts";
 import { typedInto } from "../lib/typing.ts";
-import { store } from "../store.ts";
+import { currentWs, store } from "../store.ts";
 import { rules } from "./decision-rules.ts";
-import { decisions, waitingDecisions } from "./decisions-state.ts";
+import { decisions, keepHeld, waitingDecisions } from "./decisions-state.ts";
 import { openIssue } from "./issue-actions.ts";
 import { notice } from "./notice.ts";
 import { IssueStateGlyph } from "./state-glyph.tsx";
 
-/** Sends an answer once its undo window is over: each question answered, the rule saved with a lone one's answer. */
+/** The op an entry's answer is, for one of its questions. */
+const answerOf = (e: Entry): DecisionAnswer => {
+  const rule = e.rule && canRule(e.card) ? { rule: true } : {};
+  return "text" in e.answer ? { status: "answered", option: null, text: e.answer.text, ...rule } : { status: "answered", option: e.answer.option, ...rule };
+};
+
+let leaving = false;
+/**
+ * Sends an answer once its undo window is over: each question answered, the rule saved with a lone one's answer, and
+ * Rules read again once the server has it. Leaving the page sends what is held and also keeps it on the device: the
+ * engine's own queue may not reach the disk before the tab is gone, and the next start sends what is still open.
+ */
 function post(e: Entry): void {
-  const rule = e.rule && canRule(e.card);
-  for (const m of e.members)
-    store.answerDecision(m.id, "text" in e.answer ? { status: "answered", option: null, text: e.answer.text, ...(rule ? { rule } : {}) } : { status: "answered", option: e.answer.option, ...(rule ? { rule } : {}) });
+  for (const m of e.members) store.answerDecision(m.id, answerOf(e));
+  if (leaving) keepHeld(e.members.map((m) => ({ id: m.id, set: answerOf(e) })));
+  else if (e.rule && canRule(e.card)) {
+    const ws = currentWs();
+    void when(() => store.pendingCount === 0).then(() => rules.load(ws));
+  }
 }
 
 // One sitting per tab: the answers outlive the screen, so leaving it within the undo window loses nothing.
@@ -55,12 +69,15 @@ reaction(
   () => sitting.answered,
   (ids) => decisions.setAnswered(ids),
 );
-addEventListener("pagehide", () => sitting.flush());
+addEventListener("pagehide", () => {
+  leaving = true;
+  sitting.flush();
+});
 
 const KIND: Record<DecisionKind, { icon: typeof SealQuestionIcon; one: string; many: string; own: string }> = {
   question: { icon: SealQuestionIcon, one: "Question from", many: "similar questions from", own: "Answer in your own words" },
   close: { icon: ArchiveIcon, one: "Close proposal from", many: "close proposals from", own: "Keep it, and say why" },
-  handoff: { icon: RobotIcon, one: "Hand-off plan from", many: "hand-off plans from", own: "Say what to change, then hand it over" },
+  handoff: { icon: RobotIcon, one: "Hand-off plan from", many: "hand-off plans from", own: "Change Done when in the issue, then hand it over" },
 };
 const ORDERS = [
   { value: "unblocks", label: "Unblocks most" },
@@ -121,7 +138,9 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || typedInto(e)) return;
-      const cmd = commandOf(e, card);
+      // Enter on a focused button or link (the toast's Undo, a queue row) presses it; it answers nothing here.
+      const onControl = e.target instanceof Element && !!e.target.closest("button, a, [role=button], [role=checkbox]");
+      const cmd = commandOf(e, card, onControl);
       if (!cmd) return;
       e.preventDefault();
       if (cmd.t === "undo") return notice.undoFor ? notice.runUndo() : undo();
@@ -136,6 +155,11 @@ export const Decisions = observer(function Decisions({ ws }: { ws: string }) {
         return issue && openIssue(issue);
       }
       if (cmd.t === "own") {
+        // A hand-off is changed in the issue: its Done when is the issue's to edit, not an answer's words.
+        if (card.kind === "handoff" && card.members.length === 1) {
+          const issue = store.issues.get(card.members[0]!.issueId);
+          return issue && openIssue(issue);
+        }
         setOwn((t) => t ?? "");
         return requestAnimationFrame(() => ownRef.current?.focus());
       }
@@ -342,6 +366,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
       <div className={cn("mt-5 grid items-start gap-8", group ? "grid-cols-[minmax(0,640px)]" : "grid-cols-[minmax(0,1fr)_290px]")}>
         <div>
           {group && <Members card={card} left={left} focus={focus} onToggle={onToggle} />}
+          {card.kind === "handoff" && !group && m.criteria.length > 0 && <DoneWhen items={m.criteria} />}
           <div className="flex flex-col gap-1.5">
             {card.options.map((o, i) => (
               <button
@@ -367,7 +392,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
               </button>
             ))}
             {own === null ? (
-              <button type="button" onClick={() => onOwn("")} className="grid w-full cursor-pointer grid-cols-[22px_minmax(0,1fr)] items-start gap-3 rounded-[10px] py-2 pr-3.5 pl-3 text-left hover:bg-row-hover">
+              <button type="button" onClick={() => (card.kind === "handoff" && !group ? issue && openIssue(issue) : onOwn(""))} className="grid w-full cursor-pointer grid-cols-[22px_minmax(0,1fr)] items-start gap-3 rounded-[10px] py-2 pr-3.5 pl-3 text-left hover:bg-row-hover">
                 <Kbd className="mt-px justify-self-center">R</Kbd>
                 <span className="text-[13px] text-ink-2">{group ? "Answer them in your own words" : kind.own}</span>
               </button>
@@ -383,7 +408,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
                   Answer the same way next time <Kbd className="ml-1">A</Kbd>
                 </span>
                 <span className="text-[12px] leading-[1.45] text-ink-3">
-                  In {projectOf(m)}, {ruleLine(m.topic!, card.options[card.recommended]!.label)} from now on, without asking you. Saved with the answer; listed in Rules.
+                  In {projectOf(m)}, questions on “{m.topic}” get the answer you choose here from now on, when it is one of their options, without asking you. Saved with the answer; listed in Rules.
                 </span>
               </span>
             </label>
@@ -439,20 +464,11 @@ function Members({ card, left, focus, onToggle }: { card: Card; left: ReadonlySe
         const on = !left.has(m.id);
         const issue = store.issues.get(m.issueId);
         return (
-          <div
-            key={m.id}
-            role="checkbox"
-            aria-checked={on}
-            tabIndex={-1}
-            onClick={() => onToggle(m.id)}
-            className={cn("grid h-9 cursor-pointer grid-cols-[16px_auto_minmax(0,1fr)] items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-row-hover", i === focus && "bg-row-selected")}
-          >
-            <span className={cn("grid size-4 place-items-center rounded-sm", on ? "bg-ink text-ground" : "shadow-[inset_0_0_0_1.5px_var(--color-ink-3)] text-transparent")}>
-              <CheckIcon className="size-[11px]" weight="bold" />
-            </span>
+          <label key={m.id} className={cn("grid h-9 cursor-pointer grid-cols-[16px_auto_minmax(0,1fr)] items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-row-hover", i === focus && "bg-row-selected")}>
+            <Checkbox checked={on} onCheckedChange={() => onToggle(m.id)} aria-label={`Answer ${keyOf(m)} too`} />
             <span className="font-mono text-id text-ink-2">{keyOf(m)}</span>
             <span className={cn("truncate", !on && "text-ink-3")}>{issue?.title ?? m.question}</span>
-          </div>
+          </label>
         );
       })}
       <p className="mx-2.5 mt-2 flex items-center gap-2 text-[12px] text-ink-3">
@@ -462,6 +478,24 @@ function Members({ card, left, focus, onToggle }: { card: Card; left: ReadonlySe
           <Kbd>K</Kbd> move · <Kbd>X</Kbd> check
         </span>
       </p>
+    </div>
+  );
+}
+
+/** A hand-off's proposed Done when: what handing it over writes into the issue's description, when it has none. */
+function DoneWhen({ items }: { items: string[] }) {
+  return (
+    <div className="mb-3.5 rounded-[10px] bg-panel px-3.5 pt-3 pb-2 shadow-[inset_0_0_0_1px_var(--color-rule-soft)]">
+      <div className="mb-1.5 flex items-baseline gap-2.5">
+        <span className="eyebrow">Done when</span>
+        <span className="text-[12px] text-ink-3">proposed; option {HANDOFF_OPTION + 1} writes it into the issue if it has none</span>
+      </div>
+      {items.map((t, i) => (
+        <div key={i} className="grid grid-cols-[18px_minmax(0,1fr)] gap-1.5 py-[5px] text-[13px] leading-[1.45]">
+          <i className="font-mono text-[11px] leading-[1.75] text-ink-3 not-italic">{i + 1}</i>
+          <span>{t}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -562,7 +596,7 @@ const Empty = observer(function Empty() {
 const RulesButton = observer(function RulesButton({ ws }: { ws: string }) {
   const list = rules.list;
   return (
-    <Popover>
+    <Popover onOpenChange={(open) => open && void rules.load(ws)}>
       <PopoverTrigger
         render={
           <Button variant="ghost" size="sm">

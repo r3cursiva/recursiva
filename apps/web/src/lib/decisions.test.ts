@@ -16,6 +16,7 @@ const ask = (n: number, extra: Partial<Decision> = {}): Decision => ({
   recommended: 0,
   evidence: [],
   topic: null,
+  criteria: [],
   askedById: "agent",
   status: "open",
   answer: null,
@@ -89,6 +90,9 @@ test("keys: a digit answers with its option, Enter the recommendation, S skips, 
   assert.equal(commandOf(key("1", { metaKey: true }), c), null, "⌘1 is the browser's");
   assert.deepEqual([commandOf(key("j"), c), commandOf(key("k"), c)], [{ t: "move", by: 1 }, { t: "move", by: -1 }]);
   assert.equal(commandOf(key("x"), c), null, "X checks in a group only");
+  assert.equal(commandOf(key("Enter"), c, true), null, "Enter on a focused button presses that button");
+  assert.equal(commandOf(key(" "), c, true), null);
+  assert.deepEqual(commandOf(key("2"), c, true), { t: "answer", option: 1 }, "a digit still answers");
 });
 
 function clock() {

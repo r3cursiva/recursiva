@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { and, eq, or, sql as dsql } from "drizzle-orm";
 import { db, schema } from "./db.ts";
+import { createToken } from "./auth/tokens.ts";
 import { applyTx } from "./sync/write.ts";
 import { addMember, apiFixture, asToken, fetchAs } from "./test/helpers.ts";
 
@@ -188,6 +189,20 @@ test("a hand-over writes the proposed Done when into a description that has none
   assert.match((await json<{ description: string }>(f.owner(f.api(`/issues/${own}`)))).description, /- The PDF opens/);
   assert.doesNotMatch((await json<{ description: string }>(f.owner(f.api(`/issues/${own}`)))).description, /Export CSV/);
   assert.match((await comments(own)).find((c) => c.parentId)!.body, /has its own Done when, so it is kept/);
+});
+
+test("a hand-over writes the description: a token without the issues grant is refused before anything is written; its other answers go", async () => {
+  const { secret } = await createToken({ workspaceId: f.ws.workspaceId, userId: f.ws.ownerId, name: "comments only", scope: "custom", grants: ["comments.write"], createdById: f.ws.ownerId });
+  const commentsOnly = fetchAs({ authorization: `Bearer ${secret}`, "content-type": "application/json" });
+  const HAND = { kind: "handoff", question: "Hand it to Claude?", options: ["Hand it over", "Keep it for me"], recommend: 1, criteria: ["Export works"] };
+  const key = await issue("Cycle report as XLSX");
+  const d = ((await json<{ decision: View }>(ask(key, HAND))) as { decision: View }).decision;
+  const refused = await post(commentsOnly, `/decisions/${d.id}/answer`, { option: 1 });
+  assert.equal(refused.status, 403, await refused.clone().text());
+  assert.ok((await open()).some((x) => x.id === d.id), "still open");
+  assert.equal((await comments(key)).filter((c) => c.parentId).length, 0, "no reply written");
+  assert.doesNotMatch((await json<{ description: string }>(f.owner(f.api(`/issues/${key}`)))).description, /Done when/);
+  assert.equal((await post(commentsOnly, `/decisions/${d.id}/answer`, { option: 2 })).status, 200, "keeping it is a comment's answer");
 });
 
 test("purging an issue takes its decisions along, and the log keeps neither the question nor the answer", async () => {

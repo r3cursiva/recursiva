@@ -16,7 +16,7 @@ import { DECISION_CRITERIA_MAX, DECISION_EVIDENCE_MAX, DECISION_KINDS, DECISION_
 import type { CommentCreate, Op } from "@rsva/protocol";
 import type { DocNode, NodeName } from "@rsva/editor/doc";
 import { toMarkdown } from "@rsva/editor/markdown";
-import { mayManage } from "@rsva/policy";
+import { mayManage, type Capability } from "@rsva/policy";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Tx } from "../db.ts";
@@ -160,7 +160,7 @@ async function handOver(tx: Tx, workspaceId: string, txId: string, row: Decision
   return { pending, note: "Its Done when is now in the description." };
 }
 
-export async function answerDecision(tx: Tx, workspaceId: string, actorId: string, txId: string, agent: boolean, id: string, set: DecisionAnswer, comments: Comments): Promise<Pending[]> {
+export async function answerDecision(tx: Tx, workspaceId: string, actorId: string, txId: string, agent: boolean, may: (cap: Capability) => boolean, id: string, set: DecisionAnswer, comments: Comments): Promise<Pending[]> {
   if (agent) throw new TxError("forbidden", "only a person answers a decision; the agent that asked waits for the answer");
   const row = await lockOwned(tx, decision, workspaceId, id, "decision");
   if (set.status === "open") return reopen(tx, workspaceId, actorId, row, comments);
@@ -168,6 +168,8 @@ export async function answerDecision(tx: Tx, workspaceId: string, actorId: strin
   const text = set.option === null ? (set.text ?? "") : row.options[set.option]?.label;
   if (text === undefined) throw new TxError("invalid", `option: one of 0…${row.options.length - 1}`);
   if (!text) throw new TxError("invalid", "an answer in one's own words needs the words");
+  // Handing over writes the description: the issues' grant too, checked before anything is written.
+  if (row.kind === "handoff" && set.option === HANDOFF_OPTION && !may("issues.write")) throw new TxError("forbidden", "handing an issue over writes its description: that needs the issues grant");
   const out: Pending[] = [];
   let note = "";
   if (row.kind === "handoff" && set.option === HANDOFF_OPTION) {

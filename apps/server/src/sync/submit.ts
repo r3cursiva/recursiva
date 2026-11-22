@@ -8,7 +8,7 @@
 // that keeps sending what it may not do is slowed like any other. Until RSVA-428 Telegram and email replies checked the
 // rights first: a forbidden change from a chat cost nothing, and with the budget used up a chat heard "You cannot …"
 // where the browser and the API answered "too many changes". Both checks run before anything is written either way.
-import { deniedOps, type Viewer } from "@rsva/policy";
+import { can, deniedOps, type Viewer } from "@rsva/policy";
 import type { Op, Via } from "@rsva/protocol";
 import { takeWrite, writeRetryAfter } from "./limits.ts";
 import { TxError } from "./tx-error.ts";
@@ -53,7 +53,7 @@ export async function submitTx(t: Submit): Promise<Submitted | null> {
   const denied = deniedOps(viewer, t.ops);
   if (denied) return { ok: false, refused: { by: "rights", msg: denied } };
   try {
-    return { ok: true, r: await applyTx(t.workspaceId, t.userId, t.txId, t.ops, t.signedIn, t.via) };
+    return { ok: true, r: await applyTx(t.workspaceId, t.userId, t.txId, t.ops, t.signedIn, t.via, (cap) => can(viewer, cap)) };
   } catch (e) {
     if (!(e instanceof TxError)) throw e;
     return { ok: false, refused: { by: "pipeline", code: e.code, msg: e.message } };

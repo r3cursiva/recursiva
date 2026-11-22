@@ -8,7 +8,7 @@
 // Every U action also stores what its fields held before (`sync_action.prev`): the row is read for update anyway, so
 // the issue history gets "from → to" for free instead of walking the log backwards (docs/research/comments-history-2026-10-27.md).
 import { randomUUID } from "node:crypto";
-import { deniedGuardedChange, deniedState, deniedStateUpdate, isProposalLabel, isRole, mayDeleteIssue, mayManage, PEOPLE_LABELS, PEOPLE_STATES, readsAs, type GuardActor, type Guarded } from "@rsva/policy";
+import { deniedGuardedChange, deniedState, deniedStateUpdate, isProposalLabel, isRole, mayDeleteIssue, mayManage, PEOPLE_LABELS, PEOPLE_STATES, readsAs, type GuardActor, type Guarded, type Capability } from "@rsva/policy";
 import { ISSUE_LISTS, type Action, type CommentCreate, type ListBase, type Op, type ReactionCreate, type Via } from "@rsva/protocol";
 import { emptyDoc, MENTION_SCHEME, mentionIds, sameDoc, type DocNode } from "@rsva/editor/doc";
 import { mergeDocs } from "@rsva/editor/merge";
@@ -166,7 +166,12 @@ export interface TxResult {
  * forgets it gets the narrower rules, never an admin's. `via`: the change was made in the Telegram bot's chat or by an email
  * reply (PLNR-369); the log and a new comment keep it, the history shows it.
  */
-export async function applyTx(workspaceId: string, actorId: string, txId: string, rawOps: unknown, signedIn = false, via?: Via): Promise<TxResult> {
+/**
+ * `may`: whether the actor holds a capability, for an op whose need depends on the row it changes (a decision's
+ * hand-over writes the description: issues.write besides the comments' grant deniedOps checked). submitTx passes the
+ * viewer's; the server's own callers act with every right.
+ */
+export async function applyTx(workspaceId: string, actorId: string, txId: string, rawOps: unknown, signedIn = false, via?: Via, may: (cap: Capability) => boolean = () => true): Promise<TxResult> {
   const parsed = opsSchema.safeParse(rawOps);
   if (!parsed.success) throw new TxError("invalid", z.prettifyError(parsed.error));
   if (!uuid.safeParse(txId).success) throw new TxError("invalid", "transaction id must be a UUID");
@@ -177,7 +182,7 @@ export async function applyTx(workspaceId: string, actorId: string, txId: string
     const pending: Pending[] = [];
     const touched: Touched = new Set();
     for (const op of ops) {
-      const a = await applyOp(tx, workspaceId, actorId, txId, who, touched, op, via);
+      const a = await applyOp(tx, workspaceId, actorId, txId, who, touched, op, via, may);
       if (Array.isArray(a)) pending.push(...a);
       else if (a) pending.push(a);
     }
@@ -334,6 +339,7 @@ interface OpContext {
   agent: boolean;
   touched: Touched;
   via: Via | undefined;
+  may: (cap: Capability) => boolean;
 }
 
 /**
@@ -353,7 +359,7 @@ const HANDLERS: { [O in Op as `${O["op"]}:${O["m"]}`]: (c: OpContext, op: O) => 
   "update:Attachment": (c, o) => editLink(c.tx, c.workspaceId, o.id, o.set),
   "delete:Attachment": (c, o) => removeLink(c.tx, c.workspaceId, o.id),
   "create:Decision": (c, o) => createDecision(c.tx, c.workspaceId, c.actorId, o.id, o.set, comments(c.via)),
-  "update:Decision": (c, o) => answerDecision(c.tx, c.workspaceId, c.actorId, c.txId, c.agent, o.id, o.set, comments(c.via)),
+  "update:Decision": (c, o) => answerDecision(c.tx, c.workspaceId, c.actorId, c.txId, c.agent, c.may, o.id, o.set, comments(c.via)),
   "update:Document": (c, o) => updateDocument(c.tx, c.workspaceId, c.txId, o),
   "update:Workspace": (c, o) => updateWorkspace(c.tx, c.workspaceId, o.id, o.set),
   "create:Project": (c, o) => createProject(c.tx, c.workspaceId, c.touched, o.id, o.set),
@@ -378,13 +384,13 @@ const comments = (via?: Via): Comments => ({
   describe: updateDocument,
 });
 
-async function applyOp(tx: Tx, workspaceId: string, actorId: string, txId: string, who: GuardActor, touched: Touched, op: Op, via?: Via): Promise<Pending | Pending[] | null> {
+async function applyOp(tx: Tx, workspaceId: string, actorId: string, txId: string, who: GuardActor, touched: Touched, op: Op, via: Via | undefined, may: (cap: Capability) => boolean): Promise<Pending | Pending[] | null> {
   if (op.m === "WorkflowState" || op.m === "Label") op = await guardOp(tx, workspaceId, who, op);
   const key = `${op.op}:${op.m}`;
   // Validated ops always have a handler; the check keeps a prototype key from ever being called.
   if (!Object.hasOwn(HANDLERS, key)) throw new TxError("invalid", `unknown op ${op.op} ${op.m}`);
   const handle = HANDLERS[key as keyof typeof HANDLERS] as (c: OpContext, op: Op) => Promise<Pending | Pending[] | null>;
-  return handle({ tx, workspaceId, actorId, txId, agent: who === "agent", touched, via }, op);
+  return handle({ tx, workspaceId, actorId, txId, agent: who === "agent", touched, via, may }, op);
 }
 
 // ── Process rules ─────────────────────────────────────────────────────────────────────────────────────────────
