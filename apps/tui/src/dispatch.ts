@@ -223,6 +223,7 @@ function promptOf(key: string, worktree: string, branch: string, context: string
     `\`rsva run complete ${key} --evidence "…"\` with one --evidence per criterion of \`rsva run criteria ${key}\`, in order, and the pull`,
     `request's link in --note; or, if you cannot finish, \`rsva run fail ${key} --error "…"\` and stop: do not claim or retry on your own.`,
     "Add --env to it when the cause is outside the code: no push access, the network, a missing tool.",
+    `When a decision is the owner's, ask it with \`rsva ask ${key} --question "…" --option "…" --option "…" --recommend N\` and end there: that ends the run; do not guess, and do not \`rsva run fail\`.`,
   ];
   return [
     `# ${key}`,

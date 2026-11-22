@@ -6,6 +6,7 @@ import { basename, extname } from "node:path";
 import { ApiError, Client, failure, NetworkError, SESSION_SERVICE, UsageError, type Query } from "@rsva/terminal/client";
 import { MY_WORK, STATE_GROUPS, type IssueRow } from "@rsva/terminal/issues";
 import { scratchFile } from "@rsva/terminal/programs";
+import { DECISION_KINDS } from "@rsva/schema/models";
 import { plural } from "@rsva/schema/util";
 import { clean, escaped, plain } from "@rsva/terminal/text";
 import { MOVE_WORDS, ORDER_WORDS, PRIORITY_WORDS, quoted, RELATION_WORDS, RUN_STAGES, zsh, type Completable } from "./completion.ts";
@@ -129,6 +130,12 @@ const FLAGS = {
   error: {},
   env: { boolean: true },
   evidence: { multiple: true },
+  question: {},
+  option: { multiple: true },
+  why: {},
+  recommend: {},
+  topic: {},
+  kind: { values: DECISION_KINDS },
 } as const satisfies Record<string, FlagSpec>;
 
 type Flag = keyof typeof FLAGS;
@@ -633,6 +640,66 @@ const runCommands: Record<string, Command> = {
   },
 };
 
+// ── Decisions (RSVA-644): a question to a person, when the decision is theirs ──────────────────────────────────────
+
+interface DecisionRow {
+  id: string;
+  key: string | null;
+  kind: string;
+  question: string;
+  options: { label: string; detail: string; why: string }[];
+  recommended: number;
+  status: string;
+  answer: string | null;
+  byRule: boolean;
+  topic: string | null;
+}
+
+/** One decision in a line or two: the key, the question, then the answer or the options with the recommended one marked. */
+const decisionLines = (d: DecisionRow) =>
+  [
+    `${d.key ?? "?"}  ${d.question}${d.topic ? `  [${d.topic}]` : ""}`,
+    d.status === "answered" ? `  answered${d.byRule ? " by a rule" : ""}: ${d.answer}` : `  ${d.options.map((o, i) => `${i + 1}. ${o.label}${i + 1 === d.recommended ? " (recommended)" : ""}`).join("   ")}`,
+  ].join("\n");
+
+const ask: Command = {
+  args: "<key>",
+  flags: '--question T --option "label — what it means"... --recommend N [--why T] [--evidence T]... [--topic T] [--kind close|handoff]',
+  about:
+    "ask a person a decision that is theirs, with 2 to 4 options and the one you recommend; the question shows in their Decisions and on the issue, your live run on it ends (not an attempt), and the issue can be claimed again once it is answered. A rule saved for the same --topic in the project answers it at once (rules lists them)",
+  async run(c) {
+    if (c.v.question === undefined) throw new UsageError("ask: --question TEXT");
+    const opts = c.v.option ?? [];
+    if (opts.length < 2 || opts.length > 4) throw new UsageError("ask: 2 to 4 --option, each `label` or `label — what it means`");
+    const recommend = Number(c.v.recommend);
+    if (!Number.isInteger(recommend) || recommend < 1 || recommend > opts.length) throw new UsageError(`ask: --recommend N, the number of one of the ${opts.length} options`);
+    const options = opts.map((o, i) => {
+      const [label, ...rest] = o.split(" — ");
+      return { label: label!.trim(), detail: rest.join(" — ").trim(), why: i + 1 === recommend ? (c.v.why ?? "") : "" };
+    });
+    const body = given({ question: await text(c, c.v.question), options, recommend, evidence: c.v.evidence, topic: c.v.topic, kind: c.v.kind });
+    return wrote(c, c.api.request<{ decision: DecisionRow; runEnded: boolean }>("POST", issuePath(c, "/decisions"), { body }), (d) =>
+      d.decision.status === "answered"
+        ? `${key(c)}: answered at once by a rule: ${d.decision.answer}`
+        : `asked on ${key(c)}; ${d.runEnded ? "your run ended, " : ""}the issue waits for the answer: end here`,
+    );
+  },
+};
+
+const decisions: Command = {
+  args: "",
+  flags: "[--all]",
+  about: "the open questions to people in the workspace, newest first; --all with the answered ones and their answers",
+  run: async (c) => shown(c, await c.api.request<{ decisions: DecisionRow[] }>("GET", "/decisions", { query: { status: c.v.all ? "all" : "open" } }), (d) => d.decisions.map(decisionLines).join("\n") || "no open questions"),
+};
+
+const rules: Command = {
+  args: "",
+  about: "the answers people saved for a topic of a project: ask with the same --topic there and the rule answers at once; read them before asking",
+  run: async (c) =>
+    shown(c, await c.api.request<{ rules: { project: string; topic: string; answer: string; by: string }[] }>("GET", "/decision-rules"), (d) => d.rules.map((r) => `${r.project}  ${r.topic}: ${r.answer}  (${r.by})`).join("\n") || "no rules"),
+};
+
 const runs: Command = {
   args: "<key>",
   about: "an issue's agent runs, newest first: attempt, stage, outcome (blocked: the environment failed, not the agent), agent, when, note",
@@ -916,7 +983,7 @@ const help: Command = {
 };
 
 /** Every command, in the order the help lists them. */
-const COMMANDS: Record<string, Command | Group> = { ...issueCommands, inbox, run: { about: "an agent's run on an issue: claim, renew, complete, fail, criteria", commands: runCommands }, runs, cycles, cycle: cycleGroup, ...settingsCommands, tui, login, logout, completion, api, help };
+const COMMANDS: Record<string, Command | Group> = { ...issueCommands, inbox, run: { about: "an agent's run on an issue: claim, renew, complete, fail, criteria", commands: runCommands }, runs, ask, decisions, rules, cycles, cycle: cycleGroup, ...settingsCommands, tui, login, logout, completion, api, help };
 
 const isGroup = (x: Command | Group): x is Group => "commands" in x;
 

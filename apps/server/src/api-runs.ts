@@ -40,7 +40,7 @@ import { takeWrite, writeRetryAfter } from "./sync/limits.ts";
 import { retrying, uniqueViolation } from "./sync/retry.ts";
 import { TxError } from "./sync/tx-error.ts";
 
-const { run, user, issue, workspace, syncAction, document } = schema;
+const { run, user, issue, workspace, syncAction, document, decision } = schema;
 
 type Row = typeof run.$inferSelect;
 type Found = Awaited<ReturnType<typeof issueByKey>>;
@@ -243,6 +243,9 @@ async function claim(req: Req): Promise<{ status: number; body: unknown }> {
   if (!RUN_STAGES.includes(stage)) throw new HttpError(400, "invalid", `stage: one of ${RUN_STAGES.join(", ")}`);
   const lease = leaseOf(b);
   const me = req.actor!.userId;
+  // A question to a person waits on the issue (RSVA-644): the work goes on after the answer, not on a guess.
+  const [asked] = await db.select({ question: decision.question }).from(decision).where(and(eq(decision.issueId, found.issue.id), eq(decision.status, "open"))).limit(1);
+  if (asked) throw new HttpError(409, "waiting", `${found.issue.key} waits for a person's answer to “${asked.question}”; claim it again once it is answered (rsva decisions)`);
   let got: Claimed;
   try {
     got = await retrying(() =>

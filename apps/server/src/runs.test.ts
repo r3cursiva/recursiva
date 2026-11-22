@@ -25,6 +25,12 @@ test("three failed or expired attempts stop the loop", () => {
   assert.equal(stopReason([failed("a"), expired, failed("b")]), "3 failed attempts", "an expired lease is a failed attempt");
 });
 
+test("a run that asked a person is no attempt: any number of them stop nothing (RSVA-644)", () => {
+  const asked: RunFacts = { outcome: "asked", errorFingerprint: null, createdAt: at() };
+  assert.equal(stopReason([asked, asked, asked, asked, asked]), null);
+  assert.equal(stopReason([failed("a"), asked, failed("b")]), null, "two failures and a question are two failures");
+});
+
 test("the same error twice in a row stops; different errors, or an expiry between, do not", () => {
   assert.equal(stopReason([failed("a"), failed("a")]), "the same error twice in a row");
   assert.equal(stopReason([failed("a"), failed("b")]), null);
