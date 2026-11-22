@@ -32,7 +32,7 @@ export type Comment = Row<typeof comment>;
 export type Reaction = Row<typeof reaction>;
 export type Attachment = Row<typeof attachment>;
 /** A question an agent asked a person (RSVA-644); see `decision` in db.ts. */
-export type Decision = Row<typeof decision>;
+export type Decision = Omit<Row<typeof decision>, "replacedRule">;
 /**
  * An issue's description; `id` is the issue's id. `tx`: the transaction that wrote this text (null: none yet); missing in
  * a copy kept before it existed.
@@ -510,7 +510,10 @@ export const DECISION_TEXT_MAX = 500;
 /** How long an answer can be taken back on the server (the screen holds its own answers this long before sending). */
 export const DECISION_UNDO_MS = 8000;
 /** What an agent sends to ask; the server sets who asked, the status and the time. */
-export type DecisionCreate = Pick<Decision, "issueId" | "kind" | "question" | "options" | "recommended" | "evidence" | "topic">;
+export type DecisionCreate = Pick<Decision, "issueId" | "kind" | "question" | "options" | "recommended" | "evidence" | "topic" | "criteria">;
+/** A hand-off's first option is the hand-off itself: answering it writes the criteria into the issue's description. */
+export const HANDOFF_OPTION = 0;
+export const DECISION_CRITERIA_MAX = 20;
 /**
  * A person's answer: an option by index, or their own words (`text`); `rule` saves it for the topic. `status: "open"`
  * takes the answer back, within DECISION_UNDO_MS and by the person who gave it.

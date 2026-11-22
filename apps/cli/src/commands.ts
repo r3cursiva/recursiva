@@ -136,6 +136,7 @@ const FLAGS = {
   recommend: {},
   topic: {},
   kind: { values: DECISION_KINDS },
+  criterion: { multiple: true },
 } as const satisfies Record<string, FlagSpec>;
 
 type Flag = keyof typeof FLAGS;
@@ -664,9 +665,9 @@ const decisionLines = (d: DecisionRow) =>
 
 const ask: Command = {
   args: "<key>",
-  flags: '--question T --option "label — what it means"... --recommend N [--why T] [--evidence T]... [--topic T] [--kind close|handoff]',
+  flags: '--question T --option "label — what it means"... --recommend N [--why T] [--evidence T]... [--topic T] [--kind close|handoff] [--criterion T]...',
   about:
-    "ask a person a decision that is theirs, with 2 to 4 options and the one you recommend; the question shows in their Decisions and on the issue, your live run on it ends (not an attempt), and the issue can be claimed again once it is answered. A rule saved for the same --topic in the project answers it at once (rules lists them)",
+    "ask a person a decision that is theirs, with 2 to 4 options and the one you recommend. A question (the default kind) is asked from your live run on the issue and ends it (not an attempt); the issue can be claimed again once it is answered. --kind close or handoff needs no run; a hand-off's first option is the hand-over, and its --criterion lines become the issue's Done when if it has none. One open question per issue. A rule for the same kind and --topic in the project answers at once when its answer is one of your options (rules lists them). Read answers with decisions --all",
   async run(c) {
     if (c.v.question === undefined) throw new UsageError("ask: --question TEXT");
     const opts = c.v.option ?? [];
@@ -677,11 +678,11 @@ const ask: Command = {
       const [label, ...rest] = o.split(" — ");
       return { label: label!.trim(), detail: rest.join(" — ").trim(), why: i + 1 === recommend ? (c.v.why ?? "") : "" };
     });
-    const body = given({ question: await text(c, c.v.question), options, recommend, evidence: c.v.evidence, topic: c.v.topic, kind: c.v.kind });
+    const body = given({ question: await text(c, c.v.question), options, recommend, evidence: c.v.evidence, topic: c.v.topic, kind: c.v.kind, criteria: c.v.criterion });
     return wrote(c, c.api.request<{ decision: DecisionRow; runEnded: boolean }>("POST", issuePath(c, "/decisions"), { body }), (d) =>
       d.decision.status === "answered"
-        ? `${key(c)}: answered at once by a rule: ${d.decision.answer}`
-        : `asked on ${key(c)}; ${d.runEnded ? "your run ended, " : ""}the issue waits for the answer: end here`,
+        ? `${key(c)}: answered at once by a rule: ${d.decision.answer}; your run did not end, go on`
+        : `asked on ${key(c)}; ${d.runEnded ? "your run ended: end here, the issue waits for the answer" : "no run ended"}`,
     );
   },
 };

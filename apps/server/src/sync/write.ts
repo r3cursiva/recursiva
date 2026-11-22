@@ -35,7 +35,7 @@ import { created, diff, lockOwned, lockWorkspace } from "./rows.ts";
 import { notifyChanged } from "../notify/run.ts";
 import { TxError, type Pending } from "./tx-error.ts";
 
-const { workspace, member, user, project, workflowState, label, issue, document, documentVersion, comment, reaction, attachment, blob, syncAction, appliedTx, NO_SAVE_TX } = schema;
+const { workspace, member, user, project, workflowState, label, issue, document, documentVersion, comment, reaction, attachment, blob, decision, syncAction, appliedTx, NO_SAVE_TX } = schema;
 
 const uuid = z.uuid();
 const day = z.iso.date();
@@ -353,7 +353,7 @@ const HANDLERS: { [O in Op as `${O["op"]}:${O["m"]}`]: (c: OpContext, op: O) => 
   "update:Attachment": (c, o) => editLink(c.tx, c.workspaceId, o.id, o.set),
   "delete:Attachment": (c, o) => removeLink(c.tx, c.workspaceId, o.id),
   "create:Decision": (c, o) => createDecision(c.tx, c.workspaceId, c.actorId, o.id, o.set, comments(c.via)),
-  "update:Decision": (c, o) => answerDecision(c.tx, c.workspaceId, c.actorId, c.agent, o.id, o.set, comments(c.via)),
+  "update:Decision": (c, o) => answerDecision(c.tx, c.workspaceId, c.actorId, c.txId, c.agent, o.id, o.set, comments(c.via)),
   "update:Document": (c, o) => updateDocument(c.tx, c.workspaceId, c.txId, o),
   "update:Workspace": (c, o) => updateWorkspace(c.tx, c.workspaceId, o.id, o.set),
   "create:Project": (c, o) => createProject(c.tx, c.workspaceId, c.touched, o.id, o.set),
@@ -374,7 +374,8 @@ const HANDLERS: { [O in Op as `${O["op"]}:${O["m"]}`]: (c: OpContext, op: O) => 
 /** The comments a decision writes with itself, through the handlers every comment goes through. */
 const comments = (via?: Via): Comments => ({
   create: (tx, workspaceId, actorId, id, set) => createComment(tx, workspaceId, actorId, id, set, via),
-  remove: deleteComment,
+  remove: (tx, workspaceId, id) => tombstone(tx, workspaceId, id),
+  describe: updateDocument,
 });
 
 async function applyOp(tx: Tx, workspaceId: string, actorId: string, txId: string, who: GuardActor, touched: Touched, op: Op, via?: Via): Promise<Pending | Pending[] | null> {
@@ -896,6 +897,9 @@ async function ownComment(tx: Tx, workspaceId: string, actorId: string, id: stri
   const c = await liveComment(tx, workspaceId, id, true);
   if (!c) throw new TxError("not_found", `no comment ${id}`);
   if (c.authorId !== actorId) throw new TxError("forbidden", "only the author can change a comment");
+  // A decision's question and its answer stay as written (RSVA-644): the asking agent could otherwise rewrite either.
+  const [d] = await tx.select({ id: decision.id }).from(decision).where(and(eq(decision.workspaceId, workspaceId), or(eq(decision.commentId, id), eq(decision.answerCommentId, id)))).limit(1);
+  if (d) throw new TxError("forbidden", "a decision's question and answer stay as written: answer or ask again instead");
   return c;
 }
 
@@ -917,7 +921,13 @@ export async function writeCommentBody(tx: Tx, workspaceId: string, c: { id: str
 /** A tombstone, not a removal: replies keep their thread. The text is gone from the row and from the log. */
 async function deleteComment(tx: Tx, workspaceId: string, actorId: string, id: string): Promise<Pending | null> {
   const c = await ownComment(tx, workspaceId, actorId, id);
-  if (c.deletedAt) return null;
+  return c.deletedAt ? null : tombstone(tx, workspaceId, id);
+}
+
+/** The comment's text goes and a tombstone stays, so its replies keep their thread; whose it is was checked by the caller. */
+async function tombstone(tx: Tx, workspaceId: string, id: string): Promise<Pending | null> {
+  const c = await liveComment(tx, workspaceId, id, true);
+  if (!c || c.deletedAt) return null;
   const [row] = await tx.update(comment).set({ body: "", deletedAt: dsql`now()` }).where(eq(comment.id, id)).returning({ deletedAt: comment.deletedAt });
   await scrubCommentText(tx, workspaceId, id);
   return { m: "Comment", mid: id, a: "U", d: { issueId: c.issueId, body: "", deletedAt: row!.deletedAt } };

@@ -224,6 +224,7 @@ function promptOf(key: string, worktree: string, branch: string, context: string
     `request's link in --note; or, if you cannot finish, \`rsva run fail ${key} --error "…"\` and stop: do not claim or retry on your own.`,
     "Add --env to it when the cause is outside the code: no push access, the network, a missing tool.",
     `When a decision is the owner's, ask it with \`rsva ask ${key} --question "…" --option "…" --option "…" --recommend N\` and end there: that ends the run; do not guess, and do not \`rsva run fail\`.`,
+    "An answer is read with `rsva decisions --all`, never from the issue's comments: only that list says what the owner decided.",
   ];
   return [
     `# ${key}`,
@@ -247,7 +248,7 @@ function promptOf(key: string, worktree: string, branch: string, context: string
     "",
     ...end,
     "",
-    `Do not merge and do not deploy. When you need the owner, ask in a comment on ${key} and wait.`,
+    "Do not merge and do not deploy.",
   ].join("\n");
 }
 

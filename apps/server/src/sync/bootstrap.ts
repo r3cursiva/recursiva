@@ -54,8 +54,9 @@ export async function* snapshot(slug: string, projectKey: string | undefined): A
       out.push(await batch("Issue", tx.select(COLUMNS.Issue).from(issue).where(issuesWhere(first ? ne(issue.projectId, first.id) : undefined))));
       // Links are drawn only in an opened issue: after the lists, in one batch for the workspace.
       out.push(await batch("Attachment", tx.select(COLUMNS.Attachment).from(attachment).where(eq(attachment.workspaceId, ws.id))));
-      // The questions agents asked (RSVA-644): the sidebar's count and the Decisions screen read them from here.
-      out.push(await batch("Decision", tx.select(COLUMNS.Decision).from(decision).where(eq(decision.workspaceId, ws.id))));
+      // The open questions agents asked (RSVA-644): the sidebar's count and the Decisions screen read them from here; an
+      // answered one leaves the snapshot, and reaches an open tab as a delta.
+      out.push(await batch("Decision", tx.select(COLUMNS.Decision).from(decision).where(and(eq(decision.workspaceId, ws.id), eq(decision.status, "open")))));
       out.push({ t: "end" });
       return out;
     },

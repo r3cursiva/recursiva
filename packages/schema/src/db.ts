@@ -413,6 +413,8 @@ export const decision = pgTable(
     recommended: smallint().notNull(),
     /** One line each, as the agent wrote it: a path, an issue's key, a pull request's #number, a fact. */
     evidence: jsonb().$type<string[]>().notNull(),
+    /** A hand-off's "Done when", as the agent proposes it: written into the issue's description when it is handed over. */
+    criteria: jsonb().$type<string[]>().notNull().default([]),
     /** What the question is about, the same words each time it comes back: a rule answers a topic of a project. */
     topic: text(),
     askedById: uuid().notNull().references(() => user.id),
@@ -426,11 +428,17 @@ export const decision = pgTable(
     /** The comment that mirrors the question, and the reply that answered it. */
     commentId: uuid(),
     answerCommentId: uuid(),
-    /** The rule that answered it as it was asked, when one did. */
+    /** The rule that answered it as it was asked, when one did (then nobody answered it: `answeredById` is null). */
     ruleId: uuid(),
+    /**
+     * Server-only, never synced: the rule an answer with "same next time" replaced, as it was, so taking the answer back
+     * puts it back. Null when the answer made a new rule or none.
+     */
+    replacedRule: jsonb().$type<{ answer: string; userId: string; decisionId: string | null; createdAt: string }>(),
     createdAt: ts().notNull().defaultNow(),
   },
-  (t) => [index().on(t.issueId), index().on(t.workspaceId)],
+  // One open question per issue: a second one waits for the first to be answered (api-decisions.ts says which).
+  (t) => [index().on(t.issueId), index().on(t.workspaceId), uniqueIndex("decision_open_index").on(t.issueId).where(sql`${t.status} = 'open'`)],
 );
 
 /**
@@ -442,6 +450,8 @@ export const decisionRule = pgTable(
   "decision_rule",
   {
     ...inProject(),
+    /** A rule answers questions of its kind only: a close proposal's answer is no answer to a question. */
+    kind: text().$type<DecisionKind>().notNull(),
     topic: text().notNull(),
     answer: text().notNull(),
     /** Who saved it, and the decision it was saved from. */
@@ -449,7 +459,7 @@ export const decisionRule = pgTable(
     decisionId: uuid().references(() => decision.id),
     createdAt: ts().notNull().defaultNow(),
   },
-  (t) => [uniqueIndex().on(t.projectId, t.topic)],
+  (t) => [uniqueIndex().on(t.projectId, t.kind, t.topic)],
 );
 
 /**

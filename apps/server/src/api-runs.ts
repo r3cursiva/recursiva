@@ -23,6 +23,7 @@
 import type { DocNode } from "@rsva/editor/doc";
 import { toMarkdown } from "@rsva/editor/markdown";
 import { can, refusal } from "@rsva/policy";
+import { decisionOpen } from "@rsva/protocol/my-work";
 import { uuidv7 } from "@rsva/protocol";
 import { COMMENT_MAX, RUN_STAGES, startedStage, type RunOutcome, type RunStage, type WorkflowState } from "@rsva/schema/models";
 import { and, asc, desc, eq, gt, isNull, ne, or, sql as dsql } from "drizzle-orm";
@@ -40,7 +41,7 @@ import { takeWrite, writeRetryAfter } from "./sync/limits.ts";
 import { retrying, uniqueViolation } from "./sync/retry.ts";
 import { TxError } from "./sync/tx-error.ts";
 
-const { run, user, issue, workspace, syncAction, document, decision } = schema;
+const { run, user, issue, workspace, syncAction, document, decision, workflowState, project } = schema;
 
 type Row = typeof run.$inferSelect;
 type Found = Awaited<ReturnType<typeof issueByKey>>;
@@ -244,8 +245,16 @@ async function claim(req: Req): Promise<{ status: number; body: unknown }> {
   const lease = leaseOf(b);
   const me = req.actor!.userId;
   // A question to a person waits on the issue (RSVA-644): the work goes on after the answer, not on a guess.
-  const [asked] = await db.select({ question: decision.question }).from(decision).where(and(eq(decision.issueId, found.issue.id), eq(decision.status, "open"))).limit(1);
-  if (asked) throw new HttpError(409, "waiting", `${found.issue.key} waits for a person's answer to “${asked.question}”; claim it again once it is answered (rsva decisions)`);
+  // Only a question blocks (a close proposal or a hand-off is the owner's triage, not the work's), and only while it waits.
+  const [asked] = await db
+    .select({ question: decision.question, status: decision.status, archivedAt: issue.archivedAt, deletedAt: issue.deletedAt, group: workflowState.group, projectArchivedAt: project.archivedAt })
+    .from(decision)
+    .innerJoin(issue, eq(issue.id, decision.issueId))
+    .innerJoin(workflowState, eq(workflowState.id, issue.stateId))
+    .innerJoin(project, eq(project.id, issue.projectId))
+    .where(and(eq(decision.issueId, found.issue.id), eq(decision.status, "open"), eq(decision.kind, "question")))
+    .limit(1);
+  if (asked && decisionOpen(asked, asked, asked.group, !!asked.projectArchivedAt)) throw new HttpError(409, "waiting", `${found.issue.key} waits for a person's answer to “${asked.question}”; claim it again once it is answered (rsva decisions)`);
   let got: Claimed;
   try {
     got = await retrying(() =>

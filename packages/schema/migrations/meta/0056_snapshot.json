@@ -1,5 +1,5 @@
 {
-  "id": "8c078f7d-7c91-4575-879c-8c4337771bb3",
+  "id": "17d7c42d-4778-46e3-b084-4eaa8af0e9e2",
   "prevId": "24440fc9-90be-41f8-856b-1ae5bb1e109a",
   "version": "7",
   "dialect": "postgresql",
@@ -1025,6 +1025,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "criteria": {
+          "name": "criteria",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
         "topic": {
           "name": "topic",
           "type": "text",
@@ -1086,6 +1093,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "replaced_rule": {
+          "name": "replaced_rule",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1121,6 +1134,22 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "decision_open_index": {
+          "name": "decision_open_index",
+          "columns": [
+            {
+              "expression": "issue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"decision\".\"status\" = 'open'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1209,6 +1238,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "topic": {
           "name": "topic",
           "type": "text",
@@ -1242,11 +1277,17 @@
         }
       },
       "indexes": {
-        "decision_rule_project_id_topic_index": {
-          "name": "decision_rule_project_id_topic_index",
+        "decision_rule_project_id_kind_topic_index": {
+          "name": "decision_rule_project_id_kind_topic_index",
           "columns": [
             {
               "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

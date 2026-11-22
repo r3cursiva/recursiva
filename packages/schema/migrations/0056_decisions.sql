@@ -7,6 +7,7 @@ CREATE TABLE "decision" (
 	"options" jsonb NOT NULL,
 	"recommended" smallint NOT NULL,
 	"evidence" jsonb NOT NULL,
+	"criteria" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"topic" text,
 	"asked_by_id" uuid NOT NULL,
 	"status" text DEFAULT 'open' NOT NULL,
@@ -17,6 +18,7 @@ CREATE TABLE "decision" (
 	"comment_id" uuid,
 	"answer_comment_id" uuid,
 	"rule_id" uuid,
+	"replaced_rule" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -24,6 +26,7 @@ CREATE TABLE "decision_rule" (
 	"id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
 	"workspace_id" uuid NOT NULL,
 	"project_id" uuid NOT NULL,
+	"kind" text NOT NULL,
 	"topic" text NOT NULL,
 	"answer" text NOT NULL,
 	"user_id" uuid NOT NULL,
@@ -41,4 +44,5 @@ ALTER TABLE "decision_rule" ADD CONSTRAINT "decision_rule_user_id_user_id_fk" FO
 ALTER TABLE "decision_rule" ADD CONSTRAINT "decision_rule_decision_id_decision_id_fk" FOREIGN KEY ("decision_id") REFERENCES "public"."decision"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "decision_issue_id_index" ON "decision" USING btree ("issue_id");--> statement-breakpoint
 CREATE INDEX "decision_workspace_id_index" ON "decision" USING btree ("workspace_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "decision_rule_project_id_topic_index" ON "decision_rule" USING btree ("project_id","topic");
+CREATE UNIQUE INDEX "decision_open_index" ON "decision" USING btree ("issue_id") WHERE "decision"."status" = 'open';--> statement-breakpoint
+CREATE UNIQUE INDEX "decision_rule_project_id_kind_topic_index" ON "decision_rule" USING btree ("project_id","kind","topic");

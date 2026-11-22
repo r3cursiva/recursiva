@@ -3,12 +3,15 @@
 // which keeps the row and its comment in one transaction and holds the rules: an agent asks but never answers, and the
 // grant they need is the comments' one (packages/policy).
 //
-// An agent that asks while it holds the issue's run ends that run as `asked`: it waits for the answer instead of
-// guessing, the run is not an attempt (runs.ts), and the issue cannot be claimed again until the question is answered.
+// A question is asked by the agent holding the issue's run, and asking ends that run as `asked` in the same transaction:
+// the agent waits for the answer instead of guessing, the run is not an attempt (runs.ts), and the issue cannot be
+// claimed again until the question is answered or no longer open (decisionOpen). Agents read answers here, not in the
+// issue's thread.
 import { uuidv7 } from "@rsva/protocol";
+import { decisionOpen } from "@rsva/protocol/my-work";
 import { can, mayManage, refusal } from "@rsva/policy";
 import { DECISION_KINDS, type Decision, type DecisionKind } from "@rsva/schema/models";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { keyOf, loadNames } from "./api-names.ts";
 import { issueByKey, workspaceOf, writeTx, type IssueParams } from "./api-tx.ts";
@@ -16,15 +19,33 @@ import { db, schema } from "./db.ts";
 import { HttpError } from "./http.ts";
 import { decisionColumns } from "./sync/columns.ts";
 
-const { decision, decisionRule, project, run, user } = schema;
+const { decision, decisionRule, issue, project, user, workflowState } = schema;
 type Ws = { ws: string };
 type Body = Record<string, unknown> | null;
+/** The most rule-answered questions Rules lists, over every rule. */
+const RULED_MAX = 200;
+
+/** The issues of these decisions, with what decisionOpen reads of them. */
+async function issuesOf(rows: Decision[]) {
+  const ids = [...new Set(rows.map((d) => d.issueId))];
+  const found = ids.length
+    ? await db
+        .select({ id: issue.id, projectId: issue.projectId, number: issue.number, archivedAt: issue.archivedAt, deletedAt: issue.deletedAt, group: workflowState.group, projectArchivedAt: project.archivedAt })
+        .from(issue)
+        .innerJoin(workflowState, eq(workflowState.id, issue.stateId))
+        .innerJoin(project, eq(project.id, issue.projectId))
+        .where(inArray(issue.id, ids))
+    : [];
+  return new Map(found.map((i) => [i.id, i]));
+}
+
+/** Whether a decision waits, by the one rule (decisionOpen) the screen and the claim follow. */
+const waits = (d: Decision, i: Awaited<ReturnType<typeof issuesOf>> extends Map<string, infer I> ? I | undefined : never) => !!i && decisionOpen(d, i, i.group, !!i.projectArchivedAt);
 
 /** A decision as agents read it: the issue by key, people by email, options numbered from 1 as the CLI takes them. */
-async function viewsOf(workspaceId: string, rows: Decision[]) {
+async function viewsOf(workspaceId: string, rows: Decision[], issues?: Awaited<ReturnType<typeof issuesOf>>) {
   const n = await loadNames(workspaceId);
-  const { issue } = schema;
-  const issues = new Map((rows.length ? await db.select({ id: issue.id, projectId: issue.projectId, number: issue.number }).from(issue).where(eq(issue.workspaceId, workspaceId)) : []).map((i) => [i.id, i]));
+  issues ??= await issuesOf(rows);
   const email = (id: string | null) => (id ? (n.users.get(id)?.email ?? null) : null);
   return rows.map((d) => ({
     id: d.id,
@@ -34,6 +55,7 @@ async function viewsOf(workspaceId: string, rows: Decision[]) {
     options: d.options,
     recommended: d.recommended + 1,
     evidence: d.evidence,
+    criteria: d.criteria,
     topic: d.topic,
     askedBy: email(d.askedById),
     status: d.status,
@@ -65,17 +87,9 @@ function askOf(b: NonNullable<Body>, issueId: string) {
   const evidence = b.evidence ?? [];
   if (!Array.isArray(evidence) || evidence.some((e) => typeof e !== "string")) throw new HttpError(400, "invalid", "evidence: a list of lines");
   const topic = b.topic === undefined || b.topic === null ? null : textOf(b.topic, "topic");
-  return { issueId, kind, question: textOf(b.question, "question"), options, recommended: recommend - 1, evidence: evidence as string[], topic };
-}
-
-/** The caller's live run on the issue ends as `asked`: not an attempt, and the issue waits for the answer. */
-async function endAsked(issueId: string, me: string): Promise<boolean> {
-  const ended = await db
-    .update(run)
-    .set({ outcome: "asked", endedAt: new Date().toISOString() })
-    .where(and(eq(run.issueId, issueId), eq(run.agentId, me), isNull(run.outcome)))
-    .returning({ id: run.id });
-  return ended.length > 0;
+  const criteria = b.criteria ?? [];
+  if (!Array.isArray(criteria) || criteria.some((e) => typeof e !== "string")) throw new HttpError(400, "invalid", "criteria: a list of lines");
+  return { issueId, kind, question: textOf(b.question, "question"), options, recommended: recommend - 1, evidence: evidence as string[], topic, criteria: criteria as string[] };
 }
 
 /** A decision of the path, in the workspace; a 404 when there is none. */
@@ -95,8 +109,9 @@ export function decisionRoutes(app: FastifyInstance): void {
     const found = await issueByKey(req);
     const id = uuidv7();
     await writeTx(req, found.w, [{ op: "create", m: "Decision", id, set: askOf(req.body ?? {}, found.issue.id) }]);
-    const runEnded = await endAsked(found.issue.id, req.actor!.userId);
-    return reply.code(201).send({ decision: await one(found.w.workspaceId, id), runEnded });
+    const d = await one(found.w.workspaceId, id);
+    // A question is asked by the run's holder, and ends the run in the ask's transaction unless a rule answered it.
+    return reply.code(201).send({ decision: d, runEnded: d.kind === "question" && d.status === "open" });
   });
 
   // The workspace's decisions, newest first; ?status=open (the default) or answered, or all.
@@ -110,7 +125,10 @@ export function decisionRoutes(app: FastifyInstance): void {
       .where(and(eq(decision.workspaceId, w.workspaceId), status === "all" ? undefined : eq(decision.status, status as "open" | "answered")))
       .orderBy(desc(decision.createdAt))
       .limit(500)) as Decision[];
-    return { decisions: await viewsOf(w.workspaceId, rows) };
+    const issues = await issuesOf(rows);
+    // Open means waiting: a question on a closed, archived or trashed issue waits on nobody (decisionOpen).
+    const shown = status === "open" ? rows.filter((d) => waits(d, issues.get(d.issueId))) : rows;
+    return { decisions: await viewsOf(w.workspaceId, shown, issues) };
   });
 
   // {"option": 2} (from 1) or {"text": "…"}, and "rule": true to answer this topic so from now on. People only.
@@ -136,13 +154,29 @@ export function decisionRoutes(app: FastifyInstance): void {
   app.get<{ Params: Ws }>("/api/v1/workspaces/:ws/decision-rules", async (req) => {
     const w = await workspaceOf(req);
     const rows = await db
-      .select({ id: decisionRule.id, project: project.key, topic: decisionRule.topic, answer: decisionRule.answer, by: user.email, userId: decisionRule.userId, createdAt: decisionRule.createdAt })
+      .select({ id: decisionRule.id, project: project.key, kind: decisionRule.kind, topic: decisionRule.topic, answer: decisionRule.answer, by: user.email, userId: decisionRule.userId, createdAt: decisionRule.createdAt })
       .from(decisionRule)
       .innerJoin(project, eq(project.id, decisionRule.projectId))
       .innerJoin(user, eq(user.id, decisionRule.userId))
       .where(eq(decisionRule.workspaceId, w.workspaceId))
       .orderBy(asc(project.key), asc(decisionRule.topic));
-    return { rules: rows.map(({ userId, ...r }) => ({ ...r, mine: userId === req.actor!.userId })) };
+    // What each rule answered on its own, newest first, so the person who saved it can see what it decided for them.
+    const ruled = rows.length
+      ? ((await db
+          .select(decisionColumns)
+          .from(decision)
+          .where(inArray(decision.ruleId, rows.map((r) => r.id)))
+          .orderBy(desc(decision.answeredAt))
+          .limit(RULED_MAX)) as Decision[])
+      : [];
+    const views = await viewsOf(w.workspaceId, ruled);
+    return {
+      rules: rows.map(({ userId, ...r }) => ({
+        ...r,
+        mine: userId === req.actor!.userId,
+        answered: views.filter((v, i) => ruled[i]!.ruleId === r.id).map((v) => ({ key: v.key, question: v.question, answeredAt: v.answeredAt })),
+      })),
+    };
   });
 
   // A person removes their own rule, or an owner or admin anyone's: the comments' grant, and not an agent (it follows
