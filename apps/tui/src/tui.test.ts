@@ -715,6 +715,12 @@ test("the Activity (RSVA-643): the workspace's history by day, newest first, an 
   assert.match(rows[4]!, /^▌.*PLNR-1 +Fix the greeting +○ → ◐ → ● · 2 steps +bot/, "the cursor's row, its states and who");
   assert.ok(rows.some((r) => /waiting · needs PLNR-2 ○ Todo/.test(r)), "the wait under its row");
   assert.ok(rows.some((r) => /earlier days load at the end/.test(r)), "more before what is loaded");
+  // On a wide screen the columns fit the rows: a long title is whole, who stands next to what happened, not at the far edge.
+  const long = { ...v, days: v.days.map((d, n) => (n ? d : { ...d, items: d.items.map((x, i) => (i ? x : { ...x, title: "A title long enough to be cut at forty-eight cells before" })) })) };
+  const wide = paintActivity({ ...long, selected: 0, top: 0, statusLine: { connection: "online", message: [], session: "s", time: "12:00", brief: "" }, keys: [] }, { columns: 212, rows: 20 }).grid;
+  const wideRows = Array.from({ length: wide.h }, (_, y) => Array.from({ length: wide.w }, (_, x) => wide.at(x, y).ch).join("").trimEnd());
+  assert.ok(wideRows.some((r) => r.includes("A title long enough to be cut at forty-eight cells before  commented")), "the title whole");
+  for (const r of wideRows.filter((r) => /PLNR-\d/.test(r))) assert.ok(r.length < 150, `who next to what happened: ${r}`);
 });
 
 test("the issue's creation shows only once the first page is in, as on the web", () => {
