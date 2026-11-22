@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { apiFixture, asToken, fetchAs } from "./test/helpers.ts";
+import { randomUUID } from "node:crypto";
+import { and, eq, or, sql as dsql } from "drizzle-orm";
+import { db, schema } from "./db.ts";
+import { applyTx } from "./sync/write.ts";
+import { addMember, apiFixture, asToken, fetchAs } from "./test/helpers.ts";
 
 const f = apiFixture();
 const json = async <T>(r: Promise<Response>) => (await (await r).json()) as T;
@@ -116,4 +120,36 @@ test("a rule answers the same topic of the same project at once, with a reply na
   assert.equal((await (await readOnly())(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 403);
   assert.equal((await f.owner(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 200);
   assert.equal((await f.owner(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 404);
+});
+
+test("another member neither removes nor replaces someone's rule; an owner may remove it", async () => {
+  const m = await addMember(f.ws.workspaceId, "member");
+  const member = fetchAs({ ...(await asToken(f.ws.workspaceId, m.id)), "content-type": "application/json" });
+  const one = (await json<{ decision: View }>(ask(await issue("Label printer for the shop"), { ...ASK, topic: "printer" }))).decision;
+  const two = (await json<{ decision: View }>(ask(await issue("Label printer for the office"), { ...ASK, topic: "printer" }))).decision;
+  assert.equal((await post(f.owner, `/decisions/${one.id}/answer`, { option: 1, rule: true })).status, 200);
+  const replaced = await post(member, `/decisions/${two.id}/answer`, { option: 2, rule: true });
+  assert.equal(replaced.status, 403, "the owner's rule is not the member's to replace");
+  assert.ok((await open()).some((d) => d.id === two.id), "nothing of the refused answer was written");
+  const { rules } = await json<{ rules: { id: string; topic: string; answer: string }[] }>(f.owner(f.api("/decision-rules")));
+  const rule = rules.find((r) => r.topic === "printer")!;
+  assert.equal(rule.answer, "Speedy");
+  assert.equal((await member(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 403);
+  assert.equal((await f.owner(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 200);
+});
+
+test("purging an issue takes its decisions along, and the log keeps neither the question nor the answer", async () => {
+  const key = await issue("Courier for Iceland");
+  const secret = "Which courier ships to Reykjavik in winter?";
+  const { decision } = await json<{ decision: View }>(ask(key, { ...ASK, question: secret, topic: "iceland-courier", evidence: ["the Reykjavik tariff"] }));
+  await post(f.owner, `/decisions/${decision.id}/answer`, { text: "Only by sea, never by air" });
+  assert.equal((await f.owner(f.api(`/issues/${key}`), { method: "DELETE" })).status, 200);
+  const [row] = await db.select({ id: schema.decision.issueId }).from(schema.decision).where(eq(schema.decision.id, decision.id));
+  await applyTx(f.ws.workspaceId, f.ws.ownerId, randomUUID(), [{ op: "delete", m: "Issue", id: row!.id }], true);
+  assert.equal((await db.select().from(schema.decision).where(eq(schema.decision.id, decision.id))).length, 0);
+  const left = await db
+    .select({ id: schema.syncAction.id })
+    .from(schema.syncAction)
+    .where(and(eq(schema.syncAction.workspaceId, f.ws.workspaceId), or(dsql`${schema.syncAction.data}::text like ${"%Reykjavik%"}`, dsql`${schema.syncAction.data}::text like ${"%never by air%"}`, dsql`${schema.syncAction.prev}::text like ${"%Reykjavik%"}`)));
+  assert.deepEqual(left, [], "no words of the question, its evidence or its answer stay in the log");
 });

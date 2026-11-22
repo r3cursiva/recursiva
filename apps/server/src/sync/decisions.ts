@@ -14,6 +14,7 @@
 // request at every start, and no offline queue). A synced row costs one model in the snapshot and gives both.
 import { DECISION_EVIDENCE_MAX, DECISION_KINDS, DECISION_OPTIONS_MAX, DECISION_OPTIONS_MIN, DECISION_TEXT_MAX, DECISION_UNDO_MS, type Decision, type DecisionAnswer, type DecisionCreate } from "@rsva/schema/models";
 import type { CommentCreate } from "@rsva/protocol";
+import { mayManage } from "@rsva/policy";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Tx } from "../db.ts";
@@ -21,7 +22,7 @@ import { decisionColumns } from "./columns.ts";
 import { created, lockOwned } from "./rows.ts";
 import { TxError, type Pending } from "./tx-error.ts";
 
-const { decision, decisionRule, issue, user } = schema;
+const { decision, decisionRule, issue, member, user } = schema;
 
 const uuid = z.uuid();
 const target = { id: uuid };
@@ -130,6 +131,12 @@ export async function answerDecision(tx: Tx, workspaceId: string, actorId: strin
   await tx.update(decision).set(changed).where(eq(decision.id, id));
   if (set.rule && row.topic) {
     const projectId = await projectOf(tx, workspaceId, row.issueId);
+    // Another person's rule for the topic is theirs to change, or an owner's or admin's: not replaced by an answer.
+    const [held] = await tx.select({ userId: decisionRule.userId }).from(decisionRule).where(and(eq(decisionRule.projectId, projectId), eq(decisionRule.topic, row.topic))).for("update");
+    if (held && held.userId !== actorId) {
+      const [m] = await tx.select({ role: member.role }).from(member).where(and(eq(member.workspaceId, workspaceId), eq(member.userId, actorId)));
+      if (!mayManage(m?.role)) throw new TxError("forbidden", `another person's rule answers “${row.topic}” here; they, or an owner or admin, change it`);
+    }
     await tx
       .insert(decisionRule)
       .values({ workspaceId, projectId, topic: row.topic, answer: text, userId: actorId, decisionId: id })

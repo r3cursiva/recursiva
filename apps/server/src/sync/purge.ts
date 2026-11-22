@@ -121,9 +121,12 @@ async function purge(tx: Tx, workspaceId: string, actorId: string, row: { id: st
   // Reactions point at comments: they go before them.
   await tx.delete(reaction).where(eq(reaction.issueId, id));
   await tx.delete(comment).where(eq(comment.issueId, id));
-  // A rule outlives the question it was saved from (RSVA-644).
+  // A rule outlives the question it was saved from (RSVA-644): it is a person's standing answer to a topic, server-only,
+  // never in the log. The questions go, and clients are told so (Decision is a snapshot model).
   await tx.update(decisionRule).set({ decisionId: null }).where(inArray(decisionRule.decisionId, tx.select({ id: decision.id }).from(decision).where(eq(decision.issueId, id))));
-  for (const t of [attachment, githubLink, inboxMark, notifyOutbox, run, decision] as const) await tx.delete(t).where(eq(t.issueId, id));
+  const decisions = await tx.delete(decision).where(eq(decision.issueId, id)).returning({ id: decision.id });
+  for (const d of decisions) out.push({ m: "Decision", mid: d.id, a: "D", d: { issueId: id } });
+  for (const t of [attachment, githubLink, inboxMark, notifyOutbox, run] as const) await tx.delete(t).where(eq(t.issueId, id));
   await tx.delete(document).where(eq(document.id, id));
   await tx.delete(issue).where(eq(issue.id, id));
   out.push({ m: "Issue", mid: id, a: "D", d: { projectId: row.projectId } });

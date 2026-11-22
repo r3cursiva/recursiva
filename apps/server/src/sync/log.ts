@@ -59,11 +59,11 @@ export async function logSizes(workspaceId: string, after: number, limit: number
 
 /**
  * The fields of logged rows that hold people's words: an issue's title, a comment's body, a link's address and name, a
- * pull request's title and branch or a commit's message (GitHub links).
+ * pull request's title and branch or a commit's message (GitHub links), a decision's question, topic and answer.
  */
-const TEXT_FIELDS = ["title", "body", "url", "head"];
-/** Fields that go whole: a description's document, and the GitHub event an issue action carries (its title, its repo). */
-const WHOLE_FIELDS = ["doc", "gh"];
+const TEXT_FIELDS = ["title", "body", "url", "head", "question", "topic", "answer"];
+/** Fields that go whole: a description's document, the GitHub event an issue action carries (its title, its repo), a decision's options and evidence. */
+const WHOLE_FIELDS = ["doc", "gh", "options", "evidence"];
 
 const textArray = (fields: string[]) => dsql`array[${dsql.join(fields.map((f) => dsql`${f}`), dsql`, `)}]::text[]`;
 

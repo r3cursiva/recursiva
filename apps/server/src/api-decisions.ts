@@ -6,7 +6,7 @@
 // An agent that asks while it holds the issue's run ends that run as `asked`: it waits for the answer instead of
 // guessing, the run is not an attempt (runs.ts), and the issue cannot be claimed again until the question is answered.
 import { uuidv7 } from "@rsva/protocol";
-import { can, refusal } from "@rsva/policy";
+import { can, mayManage, refusal } from "@rsva/policy";
 import { DECISION_KINDS, type Decision, type DecisionKind } from "@rsva/schema/models";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -145,15 +145,18 @@ export function decisionRoutes(app: FastifyInstance): void {
     return { rules: rows.map(({ userId, ...r }) => ({ ...r, mine: userId === req.actor!.userId })) };
   });
 
-  // A person removes a rule: the comments' grant, and not an agent (it follows rules, it does not set them).
+  // A person removes their own rule, or an owner or admin anyone's: the comments' grant, and not an agent (it follows
+  // rules, it does not set them).
   app.delete<{ Params: Ws & { id: string } }>("/api/v1/workspaces/:ws/decision-rules/:id", async (req) => {
     const w = await workspaceOf(req);
     if (!can(w.viewer, "comments.write")) throw new HttpError(403, "forbidden", refusal(w.viewer, "comments.write", "remove a rule"));
     const [me] = await db.select({ kind: user.kind }).from(user).where(eq(user.id, req.actor!.userId));
     if (me?.kind === "agent") throw new HttpError(403, "forbidden", "rules are set by people");
     const id = req.params.id;
-    const gone = /^[0-9a-f-]{36}$/i.test(id) ? await db.delete(decisionRule).where(and(eq(decisionRule.id, id), eq(decisionRule.workspaceId, w.workspaceId))).returning({ id: decisionRule.id }) : [];
-    if (!gone.length) throw new HttpError(404, "not_found", `no rule ${id}`);
+    const [rule] = /^[0-9a-f-]{36}$/i.test(id) ? await db.select({ userId: decisionRule.userId }).from(decisionRule).where(and(eq(decisionRule.id, id), eq(decisionRule.workspaceId, w.workspaceId))) : [];
+    if (!rule) throw new HttpError(404, "not_found", `no rule ${id}`);
+    if (rule.userId !== req.actor!.userId && !mayManage(w.role)) throw new HttpError(403, "forbidden", "a rule is removed by the person who saved it, or an owner or admin");
+    await db.delete(decisionRule).where(eq(decisionRule.id, id));
     return { ok: true };
   });
 }
