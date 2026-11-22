@@ -51,26 +51,38 @@ function activityTop(v: Pick<ActivityScreen, "days" | "selected" | "top">, heigh
 /** Below this many columns the screen leaves out who did it. */
 const WIDE = 100;
 
-/** Where a row's columns start: the time, the mark, the key, the title; what happened after it, who at the right. */
-function columns(w: number) {
-  const wide = w >= WIDE;
+type Columns = { when: number; mark: number; key: number; title: number; what: number; whatEnd: number; who: number; whoW: number };
+
+const segsWidth = (list: Seg[]) => list.reduce((n, [t]) => n + widthOf(t), 0);
+const most = (items: ActivityItem[], of: (i: ActivityItem) => number) => items.reduce((n, i) => Math.max(n, of(i)), 0);
+
+/**
+ * Where a row's columns start: the time, the mark, the key, the title, what happened, who. The columns fit what the rows
+ * hold, as a table's: on a wide screen a title is not cut while what happened is short, and who stands next to it, not
+ * at the far edge; when the room runs out the title gives way first, down to about half of it.
+ */
+function columns(w: number, items: ActivityItem[]): Columns {
   const title = 22;
-  // The title takes about half of what is left: what happened is mostly short.
-  const titleW = Math.max(16, Math.min(48, Math.floor((w - title) * 0.45)));
-  const whoW = wide ? Math.min(24, Math.floor(w * 0.16)) : 0;
-  return { when: 2, mark: 8, key: 10, title, what: title + titleW + 2, who: wide ? w - 2 - whoW : w - 1, whoW };
+  const whoW = w >= WIDE ? Math.min(24, most(items, (i) => widthOf(i.who))) : 0;
+  const end = w - 2 - (whoW ? whoW + 2 : 0);
+  const room = end - title - 2;
+  const titleNeed = most(items, (i) => widthOf(i.title));
+  const whatNeed = most(items, (i) => segsWidth(i.what));
+  const titleW = titleNeed + whatNeed <= room ? titleNeed : Math.max(16, Math.min(titleNeed, room - Math.min(whatNeed, Math.ceil(room * 0.45))));
+  const what = title + titleW + 2;
+  const whatEnd = Math.min(end, what + whatNeed);
+  return { when: 2, mark: 8, key: 10, title, what, whatEnd, who: whatEnd + 2, whoW };
 }
 
-function paintRow(g: Grid, y: number, item: ActivityItem, index: number, on: boolean): void {
+function paintRow(g: Grid, y: number, c: Columns, item: ActivityItem, index: number, on: boolean): void {
   // A click selects the row, a click on the selected row opens it (app.ts), as the list's.
   const bg = listRow(g, 0, y, g.w, on, [`act:${index}`]);
-  const c = columns(g.w);
   g.text(c.when, y, item.when, { fg: "ink-3", bg });
   g.text(c.mark, y, item.mark[0], { ...item.mark[1], bg });
   g.text(c.key, y, item.key, { fg: on ? "ink" : "ink-3", bg }, c.title - 1);
   g.text(c.title, y, item.title, { fg: "ink", bg }, c.what - 2);
-  segs(g, c.what, y, item.what.map(([t, pen]): Seg => [t, { ...pen, bg }]), c.who - 2);
-  if (c.whoW) g.text(c.who, y, item.who, { fg: "ink-3", bg }, g.w - 1);
+  segs(g, c.what, y, item.what.map(([t, pen]): Seg => [t, { ...pen, bg }]), c.whatEnd);
+  if (c.whoW) g.text(c.who, y, item.who, { fg: "ink-3", bg }, c.who + c.whoW);
 }
 
 /** The line under the last row: what is still coming, or where the history begins. */
@@ -99,14 +111,15 @@ export function paintActivity(v: ActivityScreen, size: { columns: number; rows: 
   const lines = activityLines(v.days);
   const top = activityTop(v, height);
   const shown = lines.slice(top, top + height);
+  const c = columns(g.w, v.days.flatMap((d) => d.items));
   shown.forEach((l, i) => {
     const y = from + i;
     if (l.kind === "day") {
       let x = g.text(2, y, l.label, { fg: "ink", at: "B" });
       if (l.totals) x = g.text(x + 2, y, l.totals, { fg: "ink-3" });
       g.run(x + 2, y, "─", g.w - 2 - x - 2, { fg: "rule-strong" });
-    } else if (l.kind === "row") paintRow(g, y, l.item, l.index, l.index === v.selected);
-    else if (l.kind === "wait") segs(g, columns(g.w).title, y, l.item.waiting!, g.w - 2);
+    } else if (l.kind === "row") paintRow(g, y, c, l.item, l.index, l.index === v.selected);
+    else if (l.kind === "wait") segs(g, c.title, y, l.item.waiting!, g.w - 2);
   });
   const end = endLine(v);
   if (end && top + height > lines.length) g.text(2, from + lines.length - top + (lines.length ? 1 : 0), end[0], end[1], g.w - 2);
