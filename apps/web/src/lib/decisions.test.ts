@@ -17,6 +17,7 @@ const ask = (n: number, extra: Partial<Decision> = {}): Decision => ({
   evidence: [],
   topic: null,
   criteria: [],
+  closeAs: null,
   askedById: "agent",
   status: "open",
   answer: null,
@@ -73,11 +74,24 @@ test("questions of one kind and topic with the same options are one card; a lone
   assert.equal(q.length, 5, "c3, c4, c5 and the question c6 are cards of their own");
 });
 
+test("issues moved counts what the answers changed: a close's close and a hand-over, not a kept issue or a question", () => {
+  const s = new Sitting(() => {}, clock());
+  const close = buildQueue([ask(1, { kind: "close", closeAs: "done" })], none, "oldest")[0]!;
+  const keep = buildQueue([ask(2, { kind: "close", closeAs: "done" })], none, "oldest")[0]!;
+  const hand = buildQueue([ask(3, { kind: "handoff", criteria: ["x"] })], none, "oldest")[0]!;
+  s.answer(close, { option: 0, label: "Close" }, false);
+  s.answer(keep, { option: 1, label: "Keep" }, false);
+  s.answer(hand, { option: 0, label: "Hand it over" }, false);
+  s.answer(card(), { option: 0, label: "Yes" }, false);
+  assert.equal(s.summary.moved, 2);
+});
+
 test("hand-offs never group and offer no rule: each one's Done when is read before it is handed over", () => {
   const hand = (n: number) => ask(n, { kind: "handoff", topic: "small fixes", criteria: [`Fix ${n} works`] });
   const q = buildQueue([hand(1), hand(2)], none, "oldest");
   assert.deepEqual(q.map((c) => c.members.length), [1, 1]);
   assert.equal(canRule(q[0]!), false);
+  assert.equal(canRule(buildQueue([ask(4, { kind: "close", closeAs: "done", topic: "shipped" })], none, "oldest")[0]!), false, "nor a close: both act on the issue");
   assert.equal(canRule(buildQueue([ask(3, { topic: "courier" })], none, "oldest")[0]!), true);
 });
 
@@ -164,7 +178,7 @@ test("a group's unchecked members are left out of the answer and of the summary"
   const e = s.answer(g, { option: 0, label: "Yes" }, true, g.members.slice(0, 2));
   assert.deepEqual(e.members.map((m) => m.id), ["c1", "c2"]);
   assert.equal(e.rule, false, "a group saves no rule");
-  assert.deepEqual(s.summary, { decisions: 2, unblocked: 2, askers: 1, minutes: 0, rules: [] });
+  assert.deepEqual(s.summary, { decisions: 2, moved: 2, unblocked: 2, askers: 1, minutes: 0, rules: [] });
   assert.ok(!s.answered.has("c3"), "the unchecked one stays in the queue");
 });
 
@@ -176,7 +190,7 @@ test("the summary counts what was answered and the rules saved, and the time fro
   const e = s.answer(buildQueue([ask(2)], () => 2, "oldest")[0]!, { text: "Not now" }, true);
   assert.equal(e.rule, false, "no topic, no rule: a rule answers a topic, never a question's words");
   const sum = s.summary;
-  assert.deepEqual(sum, { decisions: 2, unblocked: 2, askers: 1, minutes: 3, rules: ["“courier” is answered “Yes”"] });
+  assert.deepEqual(sum, { decisions: 2, moved: 0, unblocked: 2, askers: 1, minutes: 3, rules: ["“courier” is answered “Yes”"] });
 });
 
 test("evidence lines: a path in backticks, an issue's key, a pull request, else a fact", () => {

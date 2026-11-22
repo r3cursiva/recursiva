@@ -56,6 +56,7 @@ async function viewsOf(workspaceId: string, rows: Decision[], issues?: Awaited<R
     recommended: d.recommended + 1,
     evidence: d.evidence,
     criteria: d.criteria,
+    closeAs: d.closeAs,
     topic: d.topic,
     askedBy: email(d.askedById),
     status: d.status,
@@ -87,9 +88,11 @@ function askOf(b: NonNullable<Body>, issueId: string) {
   const evidence = b.evidence ?? [];
   if (!Array.isArray(evidence) || evidence.some((e) => typeof e !== "string")) throw new HttpError(400, "invalid", "evidence: a list of lines");
   const topic = b.topic === undefined || b.topic === null ? null : textOf(b.topic, "topic");
+  const closeAs = b.as === undefined || b.as === null ? null : b.as;
+  if (closeAs !== null && closeAs !== "done" && closeAs !== "canceled") throw new HttpError(400, "invalid", "as: done or canceled");
   const criteria = b.criteria ?? [];
   if (!Array.isArray(criteria) || criteria.some((e) => typeof e !== "string")) throw new HttpError(400, "invalid", "criteria: a list of lines");
-  return { issueId, kind, question: textOf(b.question, "question"), options, recommended: recommend - 1, evidence: evidence as string[], topic, criteria: criteria as string[] };
+  return { issueId, kind, question: textOf(b.question, "question"), options, recommended: recommend - 1, evidence: evidence as string[], topic, criteria: criteria as string[], closeAs: closeAs as "done" | "canceled" | null };
 }
 
 /** A decision of the path, in the workspace; a 404 when there is none. */

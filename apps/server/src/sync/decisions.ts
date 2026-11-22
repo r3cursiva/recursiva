@@ -12,13 +12,13 @@
 // Compared: answering by a comment the server parses (the first version of this screen: no table, but a second store of
 // questions in free text, and nothing an offline client could count), and a server-only table read over REST (an extra
 // request at every start, and no offline queue). A synced row costs one model in the snapshot and gives both.
-import { DECISION_CRITERIA_MAX, DECISION_EVIDENCE_MAX, DECISION_KINDS, DECISION_OPTIONS_MAX, DECISION_OPTIONS_MIN, DECISION_TEXT_MAX, DECISION_UNDO_MS, HANDOFF_OPTION, issueKey, type Decision, type DecisionAnswer, type DecisionCreate } from "@rsva/schema/models";
+import { DECISION_CRITERIA_MAX, DECISION_EVIDENCE_MAX, DECISION_KINDS, DECISION_OPTIONS_MAX, DECISION_OPTIONS_MIN, DECISION_TEXT_MAX, DECISION_UNDO_MS, CLOSE_AS, CLOSE_OPTION, HANDOFF_OPTION, issueKey, type Decision, type DecisionAnswer, type DecisionCreate, type IssueUpdate } from "@rsva/schema/models";
 import type { CommentCreate, Op } from "@rsva/protocol";
 import type { DocNode, NodeName } from "@rsva/editor/doc";
 import { toMarkdown } from "@rsva/editor/markdown";
 import { mayManage, type Capability } from "@rsva/policy";
 import { decisionOpen } from "@rsva/protocol/my-work";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Tx } from "../db.ts";
 import { doneWhen } from "../done-when.ts";
@@ -26,7 +26,7 @@ import { decisionColumns } from "./columns.ts";
 import { created, lockOwned } from "./rows.ts";
 import { TxError, type Pending } from "./tx-error.ts";
 
-const { decision, decisionRule, document, issue, member, project, run, workflowState } = schema;
+const { decision, decisionRule, document, issue, member, project, run, user, workflowState } = schema;
 
 const uuid = z.uuid();
 const target = { id: uuid };
@@ -43,11 +43,13 @@ const create = z
     evidence: z.array(needed).max(DECISION_EVIDENCE_MAX),
     topic: needed.nullable(),
     criteria: z.array(needed).max(DECISION_CRITERIA_MAX).default([]),
+    closeAs: z.enum(CLOSE_AS).nullable().default(null),
   })
   .strict()
   .refine((s) => s.recommended < s.options.length, "recommended: the number of one of the options")
   .refine((s) => s.kind !== "handoff" || s.criteria.length > 0, "a hand-off proposes its Done when: at least one criterion")
-  .refine((s) => s.kind === "handoff" || s.criteria.length === 0, "criteria: a hand-off's only");
+  .refine((s) => s.kind === "handoff" || s.criteria.length === 0, "criteria: a hand-off's only")
+  .refine((s) => (s.kind === "close") === (s.closeAs !== null), "closeAs: where a close proposal takes the issue (done or canceled), and a close proposal's only");
 const answer = z.discriminatedUnion("status", [
   z.object({ status: z.literal("answered"), option: z.number().int().min(0).nullable(), text: words.optional(), rule: z.boolean().optional() }).strict(),
   z.object({ status: z.literal("open") }).strict(),
@@ -68,6 +70,8 @@ export interface Comments {
   create(tx: Tx, workspaceId: string, actorId: string, id: string, set: CommentCreate): Promise<Pending>;
   remove(tx: Tx, workspaceId: string, id: string): Promise<Pending | null>;
   describe(tx: Tx, workspaceId: string, txId: string, op: Extract<Op, { m: "Document" }>): Promise<Pending | null>;
+  /** An issue's state or delegate, as a person's change: the issue's history and the inboxes see it. */
+  update(tx: Tx, workspaceId: string, actorId: string, issueId: string, set: IssueUpdate): Promise<Pending | null>;
 }
 
 const line = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -122,8 +126,8 @@ export async function createDecision(tx: Tx, workspaceId: string, actorId: strin
   if (set.kind === "question" && !live) throw new TxError("forbidden", `a question is asked by the agent working on ${where.key}: claim it first (rsva run claim ${where.key})`);
   const commentId = crypto.randomUUID();
   const out: Pending[] = [await comments.create(tx, workspaceId, actorId, commentId, { issueId: set.issueId, body: askComment(set) })];
-  // A hand-off is never answered by a rule: its criteria are the issue's, read before anyone hands it over.
-  const [rule] = set.topic && set.kind !== "handoff"
+  // Only a question is answered by a rule: a hand-off's criteria and a close are read and acted on by a person.
+  const [rule] = set.topic && set.kind === "question"
     ? await tx
         .select({ id: decisionRule.id, answer: decisionRule.answer })
         .from(decisionRule)
@@ -151,18 +155,53 @@ export async function createDecision(tx: Tx, workspaceId: string, actorId: strin
 
 const node = (type: NodeName, content?: DocNode[], attrs?: Record<string, string | number | boolean>): DocNode => ({ type, ...(attrs ? { attrs } : {}), ...(content ? { content } : {}) });
 
+/** What an answer did to its issue: the changes it wrote, and the words the reply says them in. */
+interface Acted {
+  pending: Pending[];
+  note: string;
+  undoStateId?: string;
+}
+
 /**
  * A hand-off handed over: its criteria become the issue's "Done when" section, after what the description holds, when it
- * has none; one it has is kept, and the reply says so.
+ * has none (one it has is kept, and the reply says so), and the issue is delegated to the agent that asked, which finds
+ * it with `agent:me is:ready`.
  */
-async function handOver(tx: Tx, workspaceId: string, txId: string, row: Decision, comments: Comments): Promise<{ pending: Pending | null; note: string }> {
+async function handOver(tx: Tx, workspaceId: string, actorId: string, txId: string, row: Decision, comments: Comments): Promise<Acted> {
+  const out: Pending[] = [];
   const [d] = await tx.select({ doc: document.doc }).from(document).where(eq(document.id, row.issueId));
   const doc = (d?.doc as DocNode | undefined) ?? { type: "doc", content: [] };
-  if (doneWhen(toMarkdown(doc)).length) return { pending: null, note: "The issue has its own Done when, so it is kept; the proposed criteria were not written." };
-  const section = [node("heading", [{ type: "text", text: "Done when" }], { level: 2 }), node("bullet_list", row.criteria.map((c) => node("list_item", [node("paragraph", [{ type: "text", text: line(c) }])])))];
-  const content = (doc.content ?? []).filter((n) => !(n.type === "paragraph" && !n.content?.length));
-  const pending = await comments.describe(tx, workspaceId, txId, { op: "update", m: "Document", id: row.issueId, set: { doc: { type: "doc", content: [...content, ...section] } as never } });
-  return { pending, note: "Its Done when is now in the description." };
+  let note: string;
+  if (doneWhen(toMarkdown(doc)).length) note = "The issue has its own Done when, so it is kept; the proposed criteria were not written.";
+  else {
+    const section = [node("heading", [{ type: "text", text: "Done when" }], { level: 2 }), node("bullet_list", row.criteria.map((c) => node("list_item", [node("paragraph", [{ type: "text", text: line(c) }])])))];
+    const content = (doc.content ?? []).filter((n) => !(n.type === "paragraph" && !n.content?.length));
+    const p = await comments.describe(tx, workspaceId, txId, { op: "update", m: "Document", id: row.issueId, set: { doc: { type: "doc", content: [...content, ...section] } as never } });
+    if (p) out.push(p);
+    note = "Its Done when is now in the description.";
+  }
+  const [asker] = await tx.select({ kind: user.kind, name: user.name }).from(user).where(eq(user.id, row.askedById));
+  if (asker?.kind === "agent") {
+    const p = await comments.update(tx, workspaceId, actorId, row.issueId, { delegateId: row.askedById });
+    if (p) out.push(p);
+    note += ` Delegated to ${line(asker.name)}.`;
+  }
+  return { pending: out, note };
+}
+
+/** A close proposal's close: the issue to its project's state for done (the completed group) or canceled. */
+async function closeIt(tx: Tx, workspaceId: string, actorId: string, row: Decision, comments: Comments): Promise<Acted> {
+  const [i] = await tx.select({ projectId: issue.projectId, stateId: issue.stateId }).from(issue).where(eq(issue.id, row.issueId));
+  const group = row.closeAs === "canceled" ? "cancelled" : "completed";
+  const [to] = await tx
+    .select({ id: workflowState.id, name: workflowState.name })
+    .from(workflowState)
+    .where(and(eq(workflowState.projectId, i!.projectId), eq(workflowState.group, group)))
+    .orderBy(desc(workflowState.isDefault), asc(workflowState.position))
+    .limit(1);
+  if (!to) throw new TxError("invalid", `the project has no ${group} state to close the issue in`);
+  const p = await comments.update(tx, workspaceId, actorId, row.issueId, { stateId: to.id });
+  return { pending: p ? [p] : [], note: `Closed as ${row.closeAs}: moved to ${line(to.name)}.`, undoStateId: i!.stateId };
 }
 
 export async function answerDecision(tx: Tx, workspaceId: string, actorId: string, txId: string, agent: boolean, may: (cap: Capability) => boolean, id: string, set: DecisionAnswer, comments: Comments): Promise<Pending[]> {
@@ -173,21 +212,17 @@ export async function answerDecision(tx: Tx, workspaceId: string, actorId: strin
   const text = set.option === null ? (set.text ?? "") : row.options[set.option]?.label;
   if (text === undefined) throw new TxError("invalid", `option: one of 0…${row.options.length - 1}`);
   if (!text) throw new TxError("invalid", "an answer in one's own words needs the words");
-  // Handing over writes the description: the issues' grant too, checked before anything is written.
-  if (row.kind === "handoff" && set.option === HANDOFF_OPTION && !may("issues.write")) throw new TxError("forbidden", "handing an issue over writes its description: that needs the issues grant");
-  const out: Pending[] = [];
-  let note = "";
-  if (row.kind === "handoff" && set.option === HANDOFF_OPTION) {
-    const h = await handOver(tx, workspaceId, txId, row, comments);
-    if (h.pending) out.push(h.pending);
-    note = h.note;
-  }
+  if (set.rule && row.kind !== "question") throw new TxError("invalid", "only a question is answered by a rule: a hand-off and a close are a person's every time");
+  // Handing over and closing change the issue: the issues' grant too, checked before anything is written.
+  const hands = row.kind === "handoff" && set.option === HANDOFF_OPTION;
+  const closes = row.kind === "close" && set.option === CLOSE_OPTION;
+  if ((hands || closes) && !may("issues.write")) throw new TxError("forbidden", `${hands ? "handing an issue over" : "closing an issue"} changes it: that needs the issues grant`);
+  const acted: Acted = hands ? await handOver(tx, workspaceId, actorId, txId, row, comments) : closes ? await closeIt(tx, workspaceId, actorId, row, comments) : { pending: [], note: "" };
   const replyId = crypto.randomUUID();
-  out.unshift(await comments.create(tx, workspaceId, actorId, replyId, { issueId: row.issueId, ...(row.commentId ? { parentId: row.commentId } : {}), body: answerComment(text, note) }));
+  const out: Pending[] = [await comments.create(tx, workspaceId, actorId, replyId, { issueId: row.issueId, ...(row.commentId ? { parentId: row.commentId } : {}), body: answerComment(text, acted.note) }), ...acted.pending];
   const changed = { status: "answered" as const, answer: text, answerOption: set.option, answeredById: actorId, answeredAt: new Date().toISOString(), answerCommentId: replyId };
-  if (set.rule && row.kind === "handoff") throw new TxError("invalid", "a hand-off is not answered by a rule: each has its own Done when");
   const replacedRule = set.rule && row.topic ? await saveRule(tx, workspaceId, actorId, row, text) : null;
-  await tx.update(decision).set({ ...changed, replacedRule }).where(eq(decision.id, id));
+  await tx.update(decision).set({ ...changed, replacedRule, undoStateId: acted.undoStateId ?? null }).where(eq(decision.id, id));
   return [...out, { m: "Decision", mid: id, a: "U", d: { issueId: row.issueId, ...changed }, p: { status: row.status } }];
 }
 
@@ -221,10 +256,12 @@ async function reopen(tx: Tx, workspaceId: string, actorId: string, row: typeof 
   if (Date.now() - Date.parse(row.answeredAt!) > DECISION_UNDO_MS) throw new TxError("conflict", `an answer is taken back within ${DECISION_UNDO_MS / 1000} s; answer again with a comment`);
   if (row.kind === "handoff" && row.answerOption === HANDOFF_OPTION) throw new TxError("conflict", "a hand-over is not taken back: its Done when is in the description; change the issue instead");
   const removed = row.answerCommentId ? await comments.remove(tx, workspaceId, row.answerCommentId) : null;
+  // A close taken back puts the issue back in the state it was in.
+  const back = row.kind === "close" && row.answerOption === CLOSE_OPTION && row.undoStateId ? await comments.update(tx, workspaceId, actorId, row.issueId, { stateId: row.undoStateId }) : null;
   const mine = and(eq(decisionRule.decisionId, row.id), eq(decisionRule.userId, actorId));
   if (row.replacedRule) await tx.update(decisionRule).set(row.replacedRule).where(mine);
   else await tx.delete(decisionRule).where(mine);
   const changed = { status: "open" as const, answer: null, answerOption: null, answeredById: null, answeredAt: null, answerCommentId: null };
-  await tx.update(decision).set({ ...changed, replacedRule: null }).where(eq(decision.id, row.id));
-  return [...(removed ? [removed] : []), { m: "Decision", mid: row.id, a: "U", d: { issueId: row.issueId, ...changed }, p: { status: row.status } }];
+  await tx.update(decision).set({ ...changed, replacedRule: null, undoStateId: null }).where(eq(decision.id, row.id));
+  return [...(removed ? [removed] : []), ...(back ? [back] : []), { m: "Decision", mid: row.id, a: "U", d: { issueId: row.issueId, ...changed }, p: { status: row.status } }];
 }

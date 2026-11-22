@@ -1,5 +1,5 @@
 {
-  "id": "c3e65b92-61e7-4088-9016-0ad72602ab75",
+  "id": "99b56652-0922-493b-98f5-fb912ec17b69",
   "prevId": "24440fc9-90be-41f8-856b-1ae5bb1e109a",
   "version": "7",
   "dialect": "postgresql",
@@ -1024,6 +1024,18 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "close_as": {
+          "name": "close_as",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "undo_state_id": {
+          "name": "undo_state_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "criteria": {
           "name": "criteria",

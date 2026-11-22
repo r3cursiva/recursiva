@@ -32,7 +32,7 @@ export type Comment = Row<typeof comment>;
 export type Reaction = Row<typeof reaction>;
 export type Attachment = Row<typeof attachment>;
 /** A question an agent asked a person (RSVA-644); see `decision` in db.ts. */
-export type Decision = Omit<Row<typeof decision>, "replacedRule">;
+export type Decision = Omit<Row<typeof decision>, "replacedRule" | "undoStateId">;
 /**
  * An issue's description; `id` is the issue's id. `tx`: the transaction that wrote this text (null: none yet); missing in
  * a copy kept before it existed.
@@ -510,7 +510,12 @@ export const DECISION_TEXT_MAX = 500;
 /** How long an answer can be taken back on the server (the screen holds its own answers this long before sending). */
 export const DECISION_UNDO_MS = 8000;
 /** What an agent sends to ask; the server sets who asked, the status and the time. */
-export type DecisionCreate = Pick<Decision, "issueId" | "kind" | "question" | "options" | "recommended" | "evidence" | "topic" | "criteria">;
+export type DecisionCreate = Pick<Decision, "issueId" | "kind" | "question" | "options" | "recommended" | "evidence" | "topic" | "criteria" | "closeAs">;
+/** Where a close proposal takes the issue: the project's state of the completed group, or of the cancelled one. */
+export const CLOSE_AS = ["done", "canceled"] as const;
+export type CloseAs = (typeof CLOSE_AS)[number];
+/** A close proposal's first option is the close itself: answering it moves the issue. */
+export const CLOSE_OPTION = 0;
 /** A hand-off's first option is the hand-off itself: answering it writes the criteria into the issue's description. */
 export const HANDOFF_OPTION = 0;
 export const DECISION_CRITERIA_MAX = 20;

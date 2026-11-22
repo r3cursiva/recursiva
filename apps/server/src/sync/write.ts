@@ -382,6 +382,7 @@ const comments = (via?: Via): Comments => ({
   create: (tx, workspaceId, actorId, id, set) => createComment(tx, workspaceId, actorId, id, set, via),
   remove: (tx, workspaceId, id) => tombstone(tx, workspaceId, id),
   describe: updateDocument,
+  update: (tx, workspaceId, actorId, id, set) => updateIssue(tx, workspaceId, actorId, false, id, set),
 });
 
 async function applyOp(tx: Tx, workspaceId: string, actorId: string, txId: string, who: GuardActor, touched: Touched, op: Op, via: Via | undefined, may: (cap: Capability) => boolean): Promise<Pending | Pending[] | null> {

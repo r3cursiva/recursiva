@@ -21,7 +21,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
-import type { DecisionKind, DecisionOption, DecisionStatus, RunOutcome, RunStage, TileColor } from "./models.ts";
+import type { CloseAs, DecisionKind, DecisionOption, DecisionStatus, RunOutcome, RunStage, TileColor } from "./models.ts";
 
 const id = () => uuid().primaryKey().default(sql`uuidv7()`);
 const ts = () => timestamp({ withTimezone: true, mode: "string" });
@@ -413,6 +413,12 @@ export const decision = pgTable(
     recommended: smallint().notNull(),
     /** One line each, as the agent wrote it: a path, an issue's key, a pull request's #number, a fact. */
     evidence: jsonb().$type<string[]>().notNull(),
+    /** Where a close proposal's close takes the issue: the project's state for done or for canceled. Null for other kinds. */
+    closeAs: text().$type<CloseAs>(),
+    /**
+     * Server-only, never synced: the issue's state before an answer closed it, so taking the answer back puts it back.
+     */
+    undoStateId: uuid(),
     /** A hand-off's "Done when", as the agent proposes it: written into the issue's description when it is handed over. */
     criteria: jsonb().$type<string[]>().notNull().default([]),
     /** What the question is about, the same words each time it comes back: a rule answers a topic of a project. */

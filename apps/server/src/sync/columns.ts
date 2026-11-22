@@ -32,7 +32,7 @@ export const COLUMNS = {
   },
   Decision: {
     id: decision.id, issueId: decision.issueId, kind: decision.kind, question: decision.question, options: decision.options,
-    recommended: decision.recommended, evidence: decision.evidence, criteria: decision.criteria, topic: decision.topic, askedById: decision.askedById, status: decision.status,
+    recommended: decision.recommended, evidence: decision.evidence, criteria: decision.criteria, closeAs: decision.closeAs, topic: decision.topic, askedById: decision.askedById, status: decision.status,
     answer: decision.answer, answerOption: decision.answerOption, answeredById: decision.answeredById, answeredAt: decision.answeredAt,
     commentId: decision.commentId, answerCommentId: decision.answerCommentId, ruleId: decision.ruleId, createdAt: decision.createdAt,
   },

@@ -556,7 +556,7 @@ const Empty = observer(function Empty() {
   const s = sitting.summary;
   const figures: [string, string][] = [
     [String(s.decisions), s.decisions === 1 ? "decision" : "decisions"],
-    [String(s.unblocked), s.unblocked === 1 ? "issue they unblock" : "issues they unblock"],
+    [String(s.moved), s.moved === 1 ? "issue moved on" : "issues moved on"],
     [String(s.askers), s.askers === 1 ? "agent answered" : "agents answered"],
     [s.decisions > 1 ? `${s.minutes} min` : "–", "this sitting"],
   ];

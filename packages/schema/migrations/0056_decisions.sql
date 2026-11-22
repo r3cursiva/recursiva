@@ -7,6 +7,8 @@ CREATE TABLE "decision" (
 	"options" jsonb NOT NULL,
 	"recommended" smallint NOT NULL,
 	"evidence" jsonb NOT NULL,
+	"close_as" text,
+	"undo_state_id" uuid,
 	"criteria" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"topic" text,
 	"asked_by_id" uuid NOT NULL,

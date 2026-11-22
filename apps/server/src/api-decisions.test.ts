@@ -79,8 +79,8 @@ test("the run's holder asks: the row, its mirror comment and the run's end in on
 test("one open decision of each kind per issue: another agent's close proposal does not block the working agent's question", async () => {
   const key = await issue("Courier for Albania");
   const other = await tokenOf((await addMember(f.ws.workspaceId, "member", "agent")).id);
-  assert.equal((await ask(key, { ...ASK, kind: "close", question: "Close it?" }, other)).status, 201);
-  const twice = await ask(key, { ...ASK, kind: "close", question: "Close it, really?" });
+  assert.equal((await ask(key, { ...ASK, kind: "close", as: "done", question: "Close it?" }, other)).status, 201);
+  const twice = await ask(key, { ...ASK, kind: "close", as: "done", question: "Close it, really?" });
   assert.equal(twice.status, 409, "a second close proposal waits for the first");
   assert.match(((await twice.json()) as { message: string }).message, /already waits on “Close it\?”/);
   assert.equal((await claim(key)).status, 201);
@@ -88,7 +88,7 @@ test("one open decision of each kind per issue: another agent's close proposal d
 
   const done = await issue("Courier for Kosovo");
   assert.equal((await f.owner(f.api(`/issues/${done}`), { method: "PATCH", body: JSON.stringify({ state: "Done" }) })).status, 200);
-  assert.equal((await ask(done, { ...ASK, kind: "close" })).status, 400, "nothing is asked on a closed issue");
+  assert.equal((await ask(done, { ...ASK, kind: "close", as: "done" })).status, 400, "nothing is asked on a closed issue");
 });
 
 test("an issue's decisions by its key, answered ones too: where the agent reads its answer", async () => {
@@ -104,7 +104,7 @@ test("who asks: a question only from the run's holder; a close proposal or hand-
   assert.equal((await ask(key, ASK, f.owner)).status, 403, "a person without the run asks no question either");
   assert.equal((await ask(key, ASK, await tokenOf(f.ws.ownerId, "read"))).status, 403);
   assert.equal((await ask(key, { ...ASK, recommend: 3 })).status, 400);
-  const close = await ask(key, { ...ASK, kind: "close", question: "Close it as a duplicate?" });
+  const close = await ask(key, { ...ASK, kind: "close", as: "done", question: "Close it as a duplicate?" });
   assert.equal(close.status, 201, await close.clone().text());
   assert.equal(((await close.json()) as { runEnded: boolean }).runEnded, false);
   assert.equal((await claim(key)).status, 201, "a close proposal does not block the work");
@@ -169,7 +169,7 @@ test("a rule answers only its kind and topic, and only with one of the options a
 
   const offered = await asked("Courier for Crete", { topic: "courier", options: [{ label: "Hand it to a friend" }, { label: "Post" }] });
   assert.equal(offered.decision.status, "open", "an agent cannot make the rule pick what it offers");
-  const otherKind = await ask(await issue("Close the Corfu courier issue"), { ...ASK, kind: "close", topic: "courier" });
+  const otherKind = await ask(await issue("Close the Corfu courier issue"), { ...ASK, kind: "close", as: "done", topic: "courier" });
   assert.equal(((await otherKind.json()) as { decision: View }).decision.status, "open", "a close proposal is no question");
   assert.equal((await ask(await issue("Courier for Rhodes"), { ...ASK, topic: "Courier" })).status, 403, "no run, no question");
 
@@ -208,6 +208,48 @@ test("a hand-over writes the proposed Done when into a description that has none
   assert.match((await json<{ description: string }>(f.owner(f.api(`/issues/${own}`)))).description, /- The PDF opens/);
   assert.doesNotMatch((await json<{ description: string }>(f.owner(f.api(`/issues/${own}`)))).description, /Export CSV/);
   assert.match((await comments(own)).find((c) => c.parentId)!.body, /has its own Done when, so it is kept/);
+});
+
+test("a close proposal's close moves the issue to its done or canceled state, says so, and comes back on undo; keeping it moves nothing", async () => {
+  const state = async (key: string) => (await json<{ state: string; stateGroup?: string }>(f.owner(f.api(`/issues/${key}`)))).state;
+  const CLOSE = { kind: "close", question: "Close it?", options: ["Close", "Keep it open"], recommend: 1 };
+  const done = await issue("Shipped thing one");
+  const before = await state(done);
+  const d1 = ((await json<{ decision: View }>(ask(done, { ...CLOSE, as: "done" }))) as { decision: View }).decision;
+  assert.equal((await post(f.owner, `/decisions/${d1.id}/answer`, { option: 1 })).status, 200);
+  assert.equal(await state(done), "Done");
+  assert.match((await comments(done)).find((c) => c.parentId)!.body, /Closed as done: moved to Done\./);
+  assert.equal((await post(f.owner, `/decisions/${d1.id}/undo`)).status, 200);
+  assert.equal(await state(done), before, "undo puts the state back");
+
+  const canceled = await issue("Obsolete thing");
+  const d2 = ((await json<{ decision: View }>(ask(canceled, { ...CLOSE, as: "canceled" }))) as { decision: View }).decision;
+  await post(f.owner, `/decisions/${d2.id}/answer`, { option: 1 });
+  assert.equal(await state(canceled), "Cancelled");
+
+  const kept = await issue("Not shipped after all");
+  const d3 = ((await json<{ decision: View }>(ask(kept, { ...CLOSE, as: "done" }))) as { decision: View }).decision;
+  await post(f.owner, `/decisions/${d3.id}/answer`, { option: 2 });
+  assert.equal(await state(kept), before, "keeping it open changes nothing");
+  assert.equal((await ask(await issue("No target"), { ...CLOSE })).status, 400, "a close proposal says where it takes the issue");
+
+  const { secret } = await createToken({ workspaceId: f.ws.workspaceId, userId: f.ws.ownerId, name: "comments only", scope: "custom", grants: ["comments.write"], createdById: f.ws.ownerId });
+  const commentsOnly = fetchAs({ authorization: `Bearer ${secret}`, "content-type": "application/json" });
+  const guarded = await issue("Shipped thing two");
+  const d4 = ((await json<{ decision: View }>(ask(guarded, { ...CLOSE, as: "done" }))) as { decision: View }).decision;
+  assert.equal((await post(commentsOnly, `/decisions/${d4.id}/answer`, { option: 1 })).status, 403);
+  assert.equal(await state(guarded), before, "refused before anything is written");
+  assert.equal((await comments(guarded)).filter((c) => c.parentId).length, 0);
+});
+
+test("handing over delegates the issue to the agent that asked", async () => {
+  const key = await issue("Cycle report as ODS");
+  const d = ((await json<{ decision: View }>(ask(key, { kind: "handoff", question: "Hand it over?", options: ["Hand it over", "Keep it"], recommend: 1, criteria: ["It exports"] }))) as { decision: View }).decision;
+  await post(f.owner, `/decisions/${d.id}/answer`, { option: 1 });
+  const shown = await json<{ delegate: string | null; description: string }>(f.owner(f.api(`/issues/${key}`)));
+  assert.match(shown.delegate ?? "", /^bot@/);
+  assert.match(shown.description, /## Done when/);
+  assert.match((await comments(key)).find((c) => c.parentId)!.body, /Delegated to /);
 });
 
 test("no rule for hand-offs: none is saved from one, and none answers one", async () => {

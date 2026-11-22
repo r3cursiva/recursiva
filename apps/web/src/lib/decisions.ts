@@ -5,7 +5,7 @@
 // may read the answer in between), or hold the answer here for the window and send it after (an undo is instant and
 // offline, and nothing reaches the agent that was taken back). Held; the server's undo (DECISION_UNDO_MS) is for the
 // API and the CLI. Leaving the page sends what is held.
-import { DECISION_UNDO_MS, parseIssueKey, type Decision, type DecisionKind, type DecisionOption } from "@rsva/schema/models";
+import { CLOSE_OPTION, DECISION_UNDO_MS, HANDOFF_OPTION, parseIssueKey, type Decision, type DecisionKind, type DecisionOption } from "@rsva/schema/models";
 import { makeAutoObservable, observableShallow } from "mobx";
 
 /** How long an answer can be taken back (the artboard's Undo, owner's issue RSVA-644). */
@@ -140,7 +140,10 @@ export type Post = (e: Entry) => void;
 export const answerText = (a: Answer): string => ("text" in a ? `“${a.text}”` : a.label);
 
 /** Whether "same next time" can save a rule for the card: one question, with a topic to answer by. */
-export const canRule = (card: Card): boolean => card.members.length === 1 && card.kind !== "handoff" && !!card.members[0]!.topic;
+export const canRule = (card: Card): boolean => card.members.length === 1 && card.kind === "question" && !!card.members[0]!.topic;
+
+/** Whether an answer changes its issue: a close proposal's close, a hand-off's hand-over (their first options). */
+const acts = (kind: DecisionKind, a: Answer): boolean => kind !== "question" && "option" in a && a.option === (kind === "close" ? CLOSE_OPTION : HANDOFF_OPTION);
 
 /** A rule as one line: the topic and its answer (the screen puts the project before it). */
 export const ruleLine = (topic: string, answer: string): string => `“${topic}” is answered “${answer}”`;
@@ -154,6 +157,8 @@ function entryRule(e: Pick<Entry, "card" | "answer" | "rule">): { topic: string;
 /** The sitting's summary: computed from what was answered, nothing estimated. */
 export interface Summary {
   decisions: number;
+  /** Issues an answer moved: closed by a close proposal's close, or handed over. */
+  moved: number;
   /** Open issues that waited on the answered ones. */
   unblocked: number;
   /** Distinct agents that asked them. */
@@ -224,6 +229,7 @@ export class Sitting {
     const times = this.entries.map((e) => e.at);
     return {
       decisions: members.length,
+      moved: this.entries.reduce((n, e) => n + (acts(e.card.kind, e.answer) ? e.members.length : 0), 0),
       unblocked: this.entries.reduce((n, e) => n + e.card.members.reduce((k, m, i) => k + (e.members.includes(m) ? e.card.each[i]! : 0), 0), 0),
       askers: new Set(members.map((m) => m.askedById)).size,
       minutes: times.length > 1 ? Math.round((Math.max(...times) - Math.min(...times)) / 60_000) : 0,
