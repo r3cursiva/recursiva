@@ -90,6 +90,39 @@ export function unblockCounts<T extends { id: string; blockedByIds: readonly str
   return (id) => n.get(id) ?? 0;
 }
 
+/** How an issue stands to the one a card is about. */
+export type Relation = "blocked by" | "related" | "duplicate of";
+
+/**
+ * The issue's own relations, to read a recommendation against: what blocks it, what it duplicates, and what is related
+ * (from either side: the link may be kept on the other issue). Each issue once, under its strongest relation.
+ */
+export function relationsOf<T extends { id: string; blockedByIds: readonly string[]; relatedIds: readonly string[]; duplicateOfId: string | null }>(
+  issue: T,
+  all: Iterable<T>,
+): { rel: Relation; issue: T }[] {
+  const byId = new Map<string, T>();
+  const back: string[] = [];
+  for (const i of all) {
+    byId.set(i.id, i);
+    if (i.relatedIds.includes(issue.id)) back.push(i.id);
+  }
+  const seen = new Set([issue.id]);
+  const out: { rel: Relation; issue: T }[] = [];
+  const take = (rel: Relation, ids: readonly (string | null)[]) => {
+    for (const id of ids) {
+      const other = id ? byId.get(id) : undefined;
+      if (!other || seen.has(other.id)) continue;
+      seen.add(other.id);
+      out.push({ rel, issue: other });
+    }
+  };
+  take("blocked by", issue.blockedByIds);
+  take("duplicate of", [issue.duplicateOfId]);
+  take("related", [...issue.relatedIds, ...back]);
+  return out;
+}
+
 /** What a key does on the screen; null leaves it to the app. */
 export type Command =
   | { t: "answer"; option: number }
@@ -103,15 +136,17 @@ export type Command =
 
 /**
  * The screen's keys (the artboard's key line): digits answer, ↵ the recommendation, S O R A Z, J K move, X checks in a
- * group. `onControl`: the focus is on a button or a link, whose own Enter (and Space) it keeps.
+ * group. `onControl`: the focus is on a button or a link, whose own Enter (and Space) it keeps. `reading`: the card's
+ * issue is open beside it and has the keys but a digit and Z, so that S, A, ↵ and the rest are the issue's there.
  */
-export function commandOf(e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">, card: Card | null, onControl = false): Command | null {
+export function commandOf(e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">, card: Card | null, onControl = false, reading = false): Command | null {
   if (e.metaKey || e.ctrlKey || e.altKey) return null;
   if (onControl && (e.key === "Enter" || e.key === " ")) return null;
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k === "z") return { t: "undo" };
   if (!card) return null;
   if (/^[1-9]$/.test(k)) return Number(k) <= card.options.length ? { t: "answer", option: Number(k) - 1 } : null;
+  if (reading) return null;
   if (k === "Enter" && !e.shiftKey) return { t: "answer", option: card.recommended };
   if (k === "s") return { t: "skip" };
   if (k === "o") return card.members.length === 1 ? { t: "open" } : null;
