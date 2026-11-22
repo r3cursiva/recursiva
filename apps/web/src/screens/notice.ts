@@ -12,16 +12,22 @@ class Notice {
   failed: { detail: string; label: string; value: string } | null = null;
   /** An issue just created: the toast shows its key, as soon as it has one, and Open. */
   issueId: string | null = null;
+  /**
+   * An undo that a screen holds for a time of its own (Decisions, RSVA-644: 8 s and Z): how long the toast shows, the
+   * key its Undo names, and the key in mono before the text. Null: the app's 5 s and ⌘Z.
+   */
+  undoFor: { ms: number; kbd: string; lead: string } | null = null;
   /** Bumped by each show(): the same text twice restarts the toast's timer. */
   n = 0;
 
   constructor() {
-    makeAutoObservable<Notice, "put">(this, { undo: observableRef, failed: observableRef, put: false });
+    makeAutoObservable<Notice, "put">(this, { undo: observableRef, failed: observableRef, undoFor: observableRef, put: false });
   }
 
-  show(text: string, undo?: () => void): void {
+  show(text: string, undo?: () => void, undoFor?: Notice["undoFor"]): void {
     this.put(text);
     this.undo = undo ?? null;
+    this.undoFor = (undo && undoFor) || null;
   }
 
   /** "Branch name copied" with the name. */
@@ -51,6 +57,7 @@ class Notice {
   clear(): void {
     this.text = null;
     this.undo = null;
+    this.undoFor = null;
     this.code = null;
     this.failed = null;
     this.issueId = null;

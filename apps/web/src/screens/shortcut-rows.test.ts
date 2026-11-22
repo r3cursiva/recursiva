@@ -32,3 +32,19 @@ test("Lists: E opens the View panel and Shift with the arrows marks, as the hand
   assert.ok(marks.includes("Shift+↑") || marks.includes("⇧+↑"), marks.join());
   assert.match(source("./issue-list.tsx"), /e\.shiftKey && by/);
 });
+
+test("Decisions: the sheet lists the keys the screen's commandOf takes, and G D goes there", () => {
+  assert.deepEqual(presses("Go to", /^Decisions$/), ["G+D"]);
+  assert.match(source("../shortcuts.ts"), /chord === "g" && key === "d"/);
+  const code = source("../lib/decisions.ts");
+  for (const [label, key] of [
+    [/^Skip, open/, "s"],
+    [/own words/, "r"],
+    [/same way/, "a"],
+    [/^Undo/, "z"],
+    [/leave an issue/i, "x"],
+  ] as const) {
+    assert.ok(presses("Decisions", label).some((p) => p.toLowerCase() === key), `${label} lists ${key}`);
+    assert.match(code, new RegExp(`k === "${key}"`));
+  }
+});

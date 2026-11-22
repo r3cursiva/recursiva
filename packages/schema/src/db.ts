@@ -396,6 +396,24 @@ export const run = pgTable(
 );
 
 /**
+ * "Answer the same way next time" on the Decisions screen (RSVA-644): a question of a project and the answer a person
+ * gave it, saved by them. Server-only, outside the log: Rules lists a person's own, and agents of the workspace read
+ * them with the API. The questions and answers themselves are comments (`@rsva/protocol/decisions`).
+ */
+export const decisionRule = pgTable(
+  "decision_rule",
+  {
+    ...inProject(),
+    /** Who saved it. */
+    userId: uuid().notNull().references(() => user.id),
+    question: text().notNull(),
+    answer: text().notNull(),
+    createdAt: ts().notNull().defaultNow(),
+  },
+  (t) => [index().on(t.workspaceId, t.userId)],
+);
+
+/**
  * A file's bytes as the workspace has them, by content (PLNR-50): one row per distinct file in a workspace, however many
  * attachments and images use it. The bytes are in the blob store (apps/server/src/files), not here; this row is what the
  * quota sums and what an attachment's size and type come from. `mime` is what the server serves the file as: a raster

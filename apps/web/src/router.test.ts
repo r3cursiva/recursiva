@@ -79,7 +79,7 @@ test("routes: a project's key alone opens its home (RSVA-508)", () => {
 });
 
 test("a route's path is built from its parts and never leaves the site", () => {
-  for (const path of ["/atlas/projects/INFRA", "/atlas/projects/INFRA/issues", "/atlas/projects/INFRA/archive", "/atlas/projects/INFRA/history", "/atlas/projects", "/atlas/projects/archived", "/atlas/projects/INFRA/issues/INFRA-12", "/atlas/browse/INFRA-12", "/atlas/settings/members", "/atlas/inbox", "/atlas/my-work", "/new", "/join/abc", "/atlas/", "/"])
+  for (const path of ["/atlas/projects/INFRA", "/atlas/projects/INFRA/issues", "/atlas/projects/INFRA/archive", "/atlas/projects/INFRA/history", "/atlas/projects", "/atlas/projects/archived", "/atlas/projects/INFRA/issues/INFRA-12", "/atlas/browse/INFRA-12", "/atlas/settings/members", "/atlas/inbox", "/atlas/my-work", "/atlas/decisions", "/new", "/join/abc", "/atlas/", "/"])
     assert.equal(routePath(parseRoute(path)), path);
   for (const path of ["//3405803781/x", "//0x7f000001/", "///evil.example/projects/A/issues", "/%2F%2Fevil.example/", "/%5C%5Cevil.example/inbox", "/\\evil.example/", "/%E0"]) {
     const built = routePath(parseRoute(path));

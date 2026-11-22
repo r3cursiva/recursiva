@@ -46,6 +46,8 @@ export type Route =
   | { name: "myWork"; ws: string }
   /** /:ws/triage: what waits on the viewer's decision but is not theirs: proposals, agents' reviews (owner 2026-11-11). */
   | { name: "triage"; ws: string }
+  /** /:ws/decisions: the questions agents wait on the viewer to answer, one card at a time (RSVA-644). */
+  | { name: "decisions"; ws: string }
   /** /:ws/views: every saved view the viewer sees (PLNR-74); /:ws/views/:id a workspace view across projects. */
   | { name: "views"; ws: string }
   | { name: "view"; ws: string; viewId: string }
@@ -86,6 +88,7 @@ export const paths = {
   inbox: (ws: string) => `/${ws}/inbox`,
   myWork: (ws: string) => `/${ws}/my-work`,
   triage: (ws: string) => `/${ws}/triage`,
+  decisions: (ws: string) => `/${ws}/decisions`,
   views: (ws: string) => `/${ws}/views`,
   view: (ws: string, viewId: string) => `/${ws}/views/${viewId}`,
 };
@@ -144,6 +147,8 @@ export function routePath(r: Route): string {
       return paths.myWork(seg(r.ws));
     case "triage":
       return paths.triage(seg(r.ws));
+    case "decisions":
+      return paths.decisions(seg(r.ws));
     case "views":
       return paths.views(seg(r.ws));
     case "view":
@@ -200,6 +205,7 @@ export function parseRoute(path: string): Route {
   if (ws && section === "inbox" && !a) return { name: "inbox", ws };
   if (ws && section === "my-work" && !a) return { name: "myWork", ws };
   if (ws && section === "triage" && !a) return { name: "triage", ws };
+  if (ws && section === "decisions" && !a) return { name: "decisions", ws };
   if (ws && section === "views" && !b) return a ? { name: "view", ws, viewId: a } : { name: "views", ws };
   const key = section === "browse" && a ? parseIssueKey(a) : null;
   if (ws && key) return { name: "browse", ws, projectKey: key.projectKey, issueKey: issueKey(key.projectKey, key.number) };

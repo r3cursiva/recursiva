@@ -55,6 +55,7 @@ const NoWorkspace = chunk("NoWorkspace");
 const CreateWorkspace = chunk("CreateWorkspace");
 const Inbox = chunk("Inbox");
 const MyWork = chunk("MyWork");
+const Decisions = chunk("Decisions");
 // Saved views (PLNR-74): the views page and a view across projects.
 const ViewsIndex = chunk("ViewsIndex");
 const WorkspaceView = chunk("WorkspaceView");
@@ -117,11 +118,11 @@ export const App = observer(function App() {
           <Suspense fallback={<div className="flex-1" />}>
             <MyWork ws={ws} triage={route.name === "triage"} />
           </Suspense>
-        ) : settings || route.name === "inbox" ? (
+        ) : settings || route.name === "inbox" || route.name === "decisions" ? (
           // Their own headers, as on the artboards, and for the settings their own navigation.
           (unavailable() ?? (
             <Suspense fallback={<div className="flex-1" />}>
-              {settings ? <WorkspaceSettings ws={ws} page={settings} /> : <Inbox ws={ws} />}
+              {settings ? <WorkspaceSettings ws={ws} page={settings} /> : route.name === "decisions" ? <Decisions ws={ws} /> : <Inbox ws={ws} />}
             </Suspense>
           ))
         ) : (

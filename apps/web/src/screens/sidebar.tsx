@@ -5,6 +5,7 @@ import {
   ListChecksIcon,
   MagnifyingGlassIcon,
   SidebarSimpleIcon,
+  SignpostIcon,
   StackIcon,
   FunnelSimpleIcon,
   TrayIcon,
@@ -15,9 +16,12 @@ import { Button } from "@rsva/ui/components/button";
 import { keys } from "@rsva/ui/lib/keys";
 import { cn } from "@rsva/ui/lib/utils";
 import { observer } from "mobx-react-lite";
+import { useEffect } from "react";
 import { localToday } from "@rsva/query";
 import { formatDate } from "@rsva/display/time";
 import { cycleShort, daysLeft } from "../lib/cycles.ts";
+import { afterPaint } from "../perf.ts";
+import { decisions } from "./decisions-state.ts";
 import { pinTargets, routePin, type PinTarget } from "../lib/pins.ts";
 import { viewCount } from "../lib/views.ts";
 import { paths, router } from "../router.ts";
@@ -55,6 +59,7 @@ export const Sidebar = observer(function Sidebar({ ws, activeKey }: { ws: string
         <InboxItem ws={ws} />
         <MyWorkItem ws={ws} />
         {canTriage(store) && <TriageItem ws={ws} />}
+        <DecisionsItem ws={ws} />
         <ViewsItem ws={ws} />
         <button type="button" data-roving-item aria-label="Search" onClick={() => palette.show()} className={cn(navItem, "text-left")}>
           <MagnifyingGlassIcon className="size-4 shrink-0 strip:size-[18px]" />
@@ -160,6 +165,34 @@ const TriageItem = observer(function TriageItem({ ws }: { ws: string }) {
       <span className={itemLabel}>Triage</span>
       <NavCount n={n} />
       <Tip>Triage</Tip>
+    </Link>
+  );
+});
+
+/**
+ * Decisions (RSVA-644): the questions agents wait on the viewer to answer. Its count is asked for after the sidebar has
+ * painted, and again when the tab comes back after a while: questions are comments, not in the snapshot.
+ */
+const DecisionsItem = observer(function DecisionsItem({ ws }: { ws: string }) {
+  useEffect(() => {
+    afterPaint(() => void decisions.load(ws));
+    const back = () => document.visibilityState === "visible" && void decisions.load(ws);
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
+  }, [ws]);
+  const n = decisions.ws === ws ? decisions.waiting.length : 0;
+  return (
+    <Link
+      href={paths.decisions(ws)}
+      aria-current={router.route.name === "decisions" ? "page" : undefined}
+      aria-label={n ? `Decisions, ${n} waiting` : "Decisions"}
+      data-roving-item
+      className={navItem}
+    >
+      <SignpostIcon className="size-4 shrink-0 strip:size-[18px]" />
+      <span className={itemLabel}>Decisions</span>
+      <NavCount n={n} />
+      <Tip kbd="G D">Decisions</Tip>
     </Link>
   );
 });

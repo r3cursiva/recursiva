@@ -12,6 +12,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { readSettings } from "./auth/account.ts";
 import { cycleRoutes } from "./api-cycles.ts";
 import { inboxRoutes } from "./api-inbox.ts";
+import { decisionRoutes } from "./api-decisions.ts";
 import { runRoutes } from "./api-runs.ts";
 import { settingsRoutes } from "./api-settings.ts";
 import { tokenRoutes } from "./api-tokens.ts";
@@ -211,6 +212,7 @@ function routes(app: FastifyInstance, mailer: Mailer): void {
   cycleRoutes(app);
   inboxRoutes(app);
   runRoutes(app);
+  decisionRoutes(app);
   settingsRoutes(app);
   tokenRoutes(app, mailer);
 
