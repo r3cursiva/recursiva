@@ -35,7 +35,8 @@ export interface ServerRun {
 export interface RunCalls {
   claim(key: string, stage: RunStage): Promise<ServerRun>;
   renew(key: string): Promise<ServerRun>;
-  fail(key: string, error: string): Promise<ServerRun>;
+  /** `env`: the environment failed (the dispatch's setup), not the agent: the server records it as blocked. */
+  fail(key: string, error: string, env?: boolean): Promise<ServerRun>;
   /** The issue's newest run, whoever holds it; null when it has none. */
   latest(key: string): Promise<ServerRun | null>;
 }
@@ -50,7 +51,7 @@ function restRunCalls(api: Client): RunCalls {
   return {
     claim: (key, stage) => post(key, "", { stage, lease: LEASE_S }),
     renew: (key) => post(key, "/renew", { lease: LEASE_S }),
-    fail: (key, error) => post(key, "/fail", { error }),
+    fail: (key, error, env) => post(key, "/fail", { error, ...(env ? { env } : {}) }),
     latest: async (key) => (await api.request<{ runs: ServerRun[] }>("GET", runsPath(key))).runs[0] ?? null,
   };
 }

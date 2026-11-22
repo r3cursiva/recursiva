@@ -127,6 +127,7 @@ const FLAGS = {
   lease: {},
   note: {},
   error: {},
+  env: { boolean: true },
   evidence: { multiple: true },
 } as const satisfies Record<string, FlagSpec>;
 
@@ -573,13 +574,19 @@ interface RunAnswer {
   stop?: { reason: string; movedTo: string | null; written: boolean; refused?: string };
   /** A completion with evidence: its comment on the issue. */
   comment?: { written: boolean; refused?: string };
+  /** A completion of work in a project with a review state: the issue there, or the move refused. */
+  review?: { movedTo: string; moved: boolean; refused?: string };
 }
 
-/** A run's answer in words; a stop says why, where the issue went, and whether that could be written; evidence, its comment. */
+/**
+ * A run's answer in words; a stop says why, where the issue went, and whether that could be written; a completion, where
+ * the issue went and its evidence comment.
+ */
 const ranLine = (c: Ctx, says: string) => (d: RunAnswer) =>
   [
     done(c, `${says} ${runLine(d.run)}`),
     ...(d.stop ? [`stopped the ${d.run.stage} loop: ${d.stop.reason}${d.stop.movedTo ? `; moved to ${d.stop.movedTo}` : ""}${d.stop.written ? "" : `; not written: ${d.stop.refused}`}`] : []),
+    ...(d.review ? [d.review.moved ? `${d.run.issue} now in ${d.review.movedTo}` : `${d.run.issue} stays where it was: the move to ${d.review.movedTo} was refused: ${d.review.refused}`] : []),
     ...(d.comment ? [d.comment.written ? `commented the evidence for ${plural(d.run.evidence?.length ?? 0, "criterion", "criteria")}` : `the evidence comment was not written: ${d.comment.refused}`] : []),
   ].join("\n");
 
@@ -607,16 +614,16 @@ const runCommands: Record<string, Command> = {
   complete: {
     args: "<key>",
     flags: "[--evidence T]... [--note T]",
-    about: "end your live run as done; on work and verify, an issue with a Done when list needs --evidence for each criterion, in order (run criteria lists them); - reads one from stdin",
+    about: "end your live run as done; on work and verify, an issue with a Done when list needs --evidence for each criterion, in order (run criteria lists them); - reads one from stdin. Done work moves an open issue to its project's review state",
     run: async (c) => runCall(c, "/complete", { note: c.v.note, evidence: await evidence(c) }, "completed"),
   },
   fail: {
     args: "<key>",
-    flags: "--error T [--note T]",
-    about: "end your live run as failed; three failed attempts in a day, or the same error twice in a row, stop the loop: the issue goes to review with a comment of what was tried. The error (its first 500 characters are kept) is visible to everyone in the workspace: no secrets in it",
+    flags: "--error T [--note T] [--env]",
+    about: "end your live run as failed; three failed attempts in a day, or the same error twice in a row, stop the loop: the issue goes to review with a comment of what was tried. --env when the cause is outside the code (no push access, the network, a missing tool): recorded as blocked, not counted as your attempt; three of those in a day stop the loop too. The error (its first 500 characters are kept) is visible to everyone in the workspace: no secrets in it",
     async run(c) {
       if (c.v.error === undefined) throw new UsageError("fail: what failed? --error TEXT, - reads it from stdin");
-      return runCall(c, "/fail", { error: await text(c, c.v.error), note: c.v.note }, "failed");
+      return runCall(c, "/fail", { error: await text(c, c.v.error), note: c.v.note, env: c.v.env || undefined }, c.v.env ? "blocked" : "failed");
     },
   },
   criteria: {
@@ -628,7 +635,7 @@ const runCommands: Record<string, Command> = {
 
 const runs: Command = {
   args: "<key>",
-  about: "an issue's agent runs, newest first: attempt, stage, outcome, agent, when, note",
+  about: "an issue's agent runs, newest first: attempt, stage, outcome (blocked: the environment failed, not the agent), agent, when, note",
   run: async (c) => shown(c, await runsOf(c), (d) => runList(d.runs, c.style, d.more)),
 };
 
