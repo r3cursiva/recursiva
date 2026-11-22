@@ -17,7 +17,7 @@ import {
   StackIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { HANDOFF_OPTION, isOpenIssue, type Decision, type DecisionAnswer, type DecisionKind } from "@rsva/schema/models";
+import { HANDOFF_OPTION, isOpenIssue, type Decision, type DecisionAnswer, type DecisionKind, type Issue } from "@rsva/schema/models";
 import { Checkbox } from "@rsva/ui/components/checkbox";
 import { errorText, plural } from "@rsva/schema/util";
 import { Button } from "@rsva/ui/components/button";
@@ -33,7 +33,7 @@ import { compactAge } from "@rsva/display/time";
 import { reaction, when } from "mobx";
 import { observer } from "mobx-react-lite";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { answerText, buildQueue, canRule, commandOf, evidenceOf, ruleLine, Sitting, UNDO_MS, unblockCounts, type Answer, type Card, type Entry, type Order } from "../lib/decisions.ts";
+import { answerText, buildQueue, canRule, commandOf, evidenceOf, relationsOf, ruleLine, Sitting, UNDO_MS, unblockCounts, type Answer, type Card, type Entry, type Order } from "../lib/decisions.ts";
 import { typedInto } from "../lib/typing.ts";
 import { currentWs, store } from "../store.ts";
 import { rules } from "./decision-rules.ts";
@@ -326,6 +326,7 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
   const Icon = group ? StackIcon : kind.icon;
   const issue = store.issues.get(m.issueId);
   const blocked = group ? [] : [...store.issues.values()].filter((i) => i.blockedByIds.includes(m.issueId) && isOpenIssue(i, store.states.get(i.stateId)?.group));
+  const relations = group || !issue ? [] : relationsOf(issue, store.issues.values());
   const ruleOn = canRule(card);
   return (
     <article className="max-w-[980px] animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
@@ -352,17 +353,19 @@ const CardView = observer(function CardView({ card, pos, left, focus, onToggle, 
       <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12.5px] text-ink-2">
         <span className="eyebrow">Unblocks</span>
         {blocked.length ? (
-          blocked.map((b) => (
-            <span key={b.id} className="inline-flex min-w-0 items-center gap-1.5">
-              <IssueStateGlyph issue={b} />
-              <b className="font-mono text-[11.5px] font-medium text-ink">{store.issueKey(b)}</b>
-              <span className="max-w-[260px] truncate">{b.title}</span>
-            </span>
-          ))
+          blocked.map((b) => <IssueRef key={b.id} issue={b} />)
         ) : (
           <span className="text-ink-3">{group ? (card.unblocks ? plural(card.unblocks, "issue") : "nothing waits on them") : "nothing waits on it"}</span>
         )}
       </p>
+      {relations.length > 0 && (
+        <p className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12.5px] text-ink-2">
+          <span className="eyebrow">Relations</span>
+          {relations.map((r) => (
+            <IssueRef key={r.issue.id} issue={r.issue} rel={r.rel} />
+          ))}
+        </p>
+      )}
       <div className={cn("mt-5 grid items-start gap-8", group ? "grid-cols-[minmax(0,640px)]" : "grid-cols-[minmax(0,1fr)_290px]")}>
         <div>
           {group && <Members card={card} left={left} focus={focus} onToggle={onToggle} />}
@@ -499,6 +502,18 @@ function DoneWhen({ items }: { items: string[] }) {
     </div>
   );
 }
+
+/** An issue named on a card: its state, key and title; `rel` says how it stands to the card's issue. */
+const IssueRef = observer(function IssueRef({ issue, rel }: { issue: Issue; rel?: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      {rel && <span className="text-ink-3">{rel}</span>}
+      <IssueStateGlyph issue={issue} />
+      <b className="font-mono text-[11.5px] font-medium text-ink">{store.issueKey(issue)}</b>
+      <span className="max-w-[260px] truncate">{issue.title}</span>
+    </span>
+  );
+});
 
 const Evidence = observer(function Evidence({ lines }: { lines: string[] }) {
   return (

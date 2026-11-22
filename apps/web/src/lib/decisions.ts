@@ -90,6 +90,39 @@ export function unblockCounts<T extends { id: string; blockedByIds: readonly str
   return (id) => n.get(id) ?? 0;
 }
 
+/** How an issue stands to the one a card is about. */
+export type Relation = "blocked by" | "related" | "duplicate of";
+
+/**
+ * The issue's own relations, to read a recommendation against: what blocks it, what it duplicates, and what is related
+ * (from either side: the link may be kept on the other issue). Each issue once, under its strongest relation.
+ */
+export function relationsOf<T extends { id: string; blockedByIds: readonly string[]; relatedIds: readonly string[]; duplicateOfId: string | null }>(
+  issue: T,
+  all: Iterable<T>,
+): { rel: Relation; issue: T }[] {
+  const byId = new Map<string, T>();
+  const back: string[] = [];
+  for (const i of all) {
+    byId.set(i.id, i);
+    if (i.relatedIds.includes(issue.id)) back.push(i.id);
+  }
+  const seen = new Set([issue.id]);
+  const out: { rel: Relation; issue: T }[] = [];
+  const take = (rel: Relation, ids: readonly (string | null)[]) => {
+    for (const id of ids) {
+      const other = id ? byId.get(id) : undefined;
+      if (!other || seen.has(other.id)) continue;
+      seen.add(other.id);
+      out.push({ rel, issue: other });
+    }
+  };
+  take("blocked by", issue.blockedByIds);
+  take("duplicate of", [issue.duplicateOfId]);
+  take("related", [...issue.relatedIds, ...back]);
+  return out;
+}
+
 /** What a key does on the screen; null leaves it to the app. */
 export type Command =
   | { t: "answer"; option: number }
