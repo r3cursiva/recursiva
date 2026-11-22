@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { App } from "./app.ts";
-import { cursorKey, helpOf, hintsOf, ISSUE_KEYS, LIST_KEYS, press, type Binding } from "./keys.ts";
+import { ACTIVITY_KEYS, cursorKey, helpOf, hintsOf, ISSUE_KEYS, LIST_KEYS, press, type Binding } from "./keys.ts";
 import { QUEUE_HINTS, QUEUE_KEYS } from "./queue.ts";
 
 const on = (from: "list" | "queue" | null) => ({ reading: () => (from ? { from } : null) }) as unknown as App;
@@ -42,7 +42,7 @@ test("the keys lines: the list's (the artboard's and . more), the issue screen's
 });
 
 test("every key a line or the sheet names is one its screen takes, and every key it takes is in its sheet", () => {
-  for (const table of [LIST_KEYS, ISSUE_KEYS, QUEUE_KEYS] as unknown as Binding<unknown>[][]) {
+  for (const table of [LIST_KEYS, ISSUE_KEYS, QUEUE_KEYS, ACTIVITY_KEYS] as unknown as Binding<unknown>[][]) {
     // An entry with a line of its own runs, or says a key taken before the screen's (q, ⌃K, the mouse).
     for (const b of table) if (b.hint || b.help) assert.ok(b.run || b.keys.length === 0, `${b.help?.[0] ?? b.hint?.[0]} does nothing`);
     // A key taken with no line of its own is the pair of the entry right before it (k of j, end of home), which names both.
@@ -91,7 +91,7 @@ test("a list's cursor: a click on a row, the arrows, j and k only where they are
 });
 
 test("a key does one thing on a screen; A is free (the web's assignees, archive is in the menu)", () => {
-  for (const table of [LIST_KEYS, ISSUE_KEYS]) {
+  for (const table of [LIST_KEYS, ISSUE_KEYS, ACTIVITY_KEYS]) {
     const keys = table.flatMap((b) => b.keys);
     assert.deepEqual(
       keys.filter((k, i) => keys.indexOf(k) !== i),
@@ -99,4 +99,32 @@ test("a key does one thing on a screen; A is free (the web's assignees, archive 
     );
     assert.ok(!keys.includes("A"));
   }
+});
+
+test("the Activity (RSVA-643): g a opens it from the list; its cursor moves by rows and pages, ↵ opens the issue over it, Esc goes back", () => {
+  const did: string[] = [];
+  let at = 0;
+  const app = {
+    ...on(null),
+    openActivity: () => did.push("open"),
+    closeActivity: () => did.push("close"),
+    watching: () => ({ selected: at, top: 0 }),
+    selectActivity: (n: number) => (at = n),
+    activityRows: () => 11,
+    target: () => ({ id: "i1" }),
+    read: (id: string, from: string) => did.push(`read ${id} ${from}`),
+  } as unknown as App;
+  const held = { chord: "" };
+  press(LIST_KEYS, app, "g", held);
+  press(LIST_KEYS, app, "a", held);
+  press(ACTIVITY_KEYS, app, "j", held);
+  assert.equal(at, 1);
+  press(ACTIVITY_KEYS, app, "pagedown", held);
+  assert.equal(at, 11, "a page is the rows on screen less one");
+  press(ACTIVITY_KEYS, app, "home", held);
+  assert.equal(at, 0);
+  press(ACTIVITY_KEYS, app, "enter", held);
+  press(ACTIVITY_KEYS, app, "esc", held);
+  assert.deepEqual(did, ["open", "read i1 activity", "close"]);
+  assert.deepEqual(hintsOf(ACTIVITY_KEYS, false, app).map(([k]) => k), ["j/k", "↵", "s", ".", "o", "Esc", "q"]);
 });

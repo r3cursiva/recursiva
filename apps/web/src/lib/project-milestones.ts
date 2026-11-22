@@ -5,7 +5,7 @@
 import { daysBetween } from "@rsva/schema/days";
 import { cycleStatus, type Cycle, type Issue } from "@rsva/schema/models";
 import { percentDone, type CycleCounts } from "./cycles.ts";
-import { dayKey } from "./project-history.ts";
+import { dayKey } from "@rsva/display/project-history";
 
 type CycleMark = "start" | "end" | "planned";
 

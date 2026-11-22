@@ -3,7 +3,7 @@
 // the design canvas: a dial of levels with their signal pips, Everyone / Agents / People and a chip per actor, then the
 // feed (timeline-feed.tsx) or the cycles at Milestones (timeline-milestones.tsx). The lanes of "As it happened" were
 // removed in RSVA-498. The data is the project feed
-// (packages/sync/src/project-feed.ts), folded in lib/project-history.ts; creations and cycles come from what the client
+// (packages/sync/src/project-feed.ts), folded in @rsva/display/project-history; creations and cycles come from what the client
 // already has. What was taken from the artboards and what was not: docs/research/timeline-artboards-2026-11-01.md.
 import { CaretDownIcon } from "@phosphor-icons/react";
 import { HISTORY_LEVELS, type HistoryLevel } from "@rsva/protocol";
@@ -24,7 +24,7 @@ import { formatDate } from "@rsva/display/time";
 import { face } from "../lib/face.ts";
 import { readLocal, writeLocal } from "../lib/local-storage.ts";
 import { cycleDays } from "../lib/project-milestones.ts";
-import { foldHistory, stepsOf, type Who } from "../lib/project-history.ts";
+import { foldHistory, stepsOf, type Who } from "@rsva/display/project-history";
 import { typing } from "../lib/typing.ts";
 import { store } from "../store.ts";
 import { PersonFace } from "./actor.tsx";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { COMMENT_EXCERPT, type ProjectHistory } from "@rsva/protocol";
-import { DONE, ISSUE, online, PROJECT, TODO, until } from "./fake.ts";
+import { DONE, ISSUE, online, PROJECT, TODO, until, WS } from "./fake.ts";
 
 const [A, B] = ISSUE;
 const OTHER = "00000000-0000-7000-8000-0000000000a2";
@@ -46,6 +46,26 @@ test("a project history loads once per level and follows deltas: the level decid
 
   h.socket().push({ t: "d", a: [{ id: 15, m: "Comment", mid: NOWHERE, a: "U", d: { issueId: B, body: "", deletedAt: T1 }, by: OTHER }] });
   assert.deepEqual(steps.comments, [], "a deleted comment leaves");
+  h.store.dispose();
+});
+
+test("the workspace's history (null) is asked for by its slug and takes every project's issues, not unknown ones (RSVA-643)", async () => {
+  const h = await online();
+  h.projectHistory.set(`ws=${WS.slug}&level=steps`, page({ history: [{ id: 7, i: A, a: "U", by: OTHER, at: T0, d: { stateId: DONE }, p: { stateId: TODO } }] }));
+  const all = h.store.projectHistory(null, "steps");
+  await until(() => all.status === "ready", "ready");
+  assert.deepEqual(all.entries.map((e) => e.id), [7]);
+  h.socket().push({
+    t: "d",
+    a: [
+      { id: 11, m: "Issue", mid: B, a: "U", d: { stateId: DONE, updatedAt: T1 }, by: OTHER },
+      { id: 12, m: "Comment", mid: NOWHERE, a: "I", d: { issueId: A, body: "hi", createdAt: T1, parentId: null }, by: OTHER },
+      // An issue the pool does not have is no project's.
+      { id: 13, m: "Issue", mid: NOWHERE, a: "U", d: { stateId: DONE, updatedAt: T1 }, by: OTHER },
+    ],
+  });
+  assert.deepEqual(all.entries.map((e) => [e.id, e.i]), [[7, A], [11, B]]);
+  assert.deepEqual(all.comments.map((c) => [c.i, c.x]), [[A, "hi"]]);
   h.store.dispose();
 });
 

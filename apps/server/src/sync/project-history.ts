@@ -1,4 +1,6 @@
-// A project's history (PLNR-71): GET /sync/project-history?project=<id>&level=<level>[&until=<time>].
+// A project's history (PLNR-71): GET /sync/project-history?project=<id>&level=<level>[&until=<time>]. Without a project,
+// `ws=<slug>` reads the whole workspace's, every project's at once (RSVA-643, the TUI's Activity): the same entries and
+// pages, found through the log's (workspace_id, id) key instead of the project's issues.
 //
 // The log is the record, as for an issue's activity (sync/history.ts): changes of the project's issues with their
 // stored before-values, found through the (model_id, id) index for each of the project's issues, and the comments from
@@ -46,11 +48,17 @@ const { workspace, project, issue, comment, label, workflowState, syncAction } =
 /** Bytes a page holds at most, about: a quarter of an issue's, the owner's network (120 KB/s) reads it in a second. */
 const PROJECT_PAGE_BYTES = 2 ** 18;
 
+/** Whose history: one project's, or the whole workspace's when `projectId` is null. */
+interface Scope {
+  workspaceId: string;
+  projectId: string | null;
+}
+
 /** The project's issues, archived and deleted ones too: their history stays the project's. */
 const issuesOf = (projectId: string) => db.select({ id: issue.id }).from(issue).where(eq(issue.projectId, projectId));
 
-/** Log entries of the project's issues that the level shows: creation and archiving (not at outcomes), changes of its fields and what GitHub did. */
-function entriesOf(projectId: string, workspaceId: string, level: HistoryLevel): SQL {
+/** Log entries of the scope's issues that the level shows: creation and archiving (not at outcomes), changes of its fields and what GitHub did. */
+function entriesOf({ workspaceId, projectId }: Scope, level: HistoryLevel): SQL {
   const fields = LEVEL_FIELDS[level].filter((f) => f !== DESCRIPTION_FIELD);
   const verbs = dsql.join(LEVEL_GITHUB[level].map((v) => dsql`${v}`), dsql`, `);
   const changes = and(
@@ -60,12 +68,12 @@ function entriesOf(projectId: string, workspaceId: string, level: HistoryLevel):
   );
   // The project's issues now, and its moves out (PLNR-448): an issue moved away leaves the line of its move behind, its
   // story before that goes with it.
-  const movedOut = LEVEL_FIELDS[level].includes("projectId")
+  const movedOut = projectId !== null && LEVEL_FIELDS[level].includes("projectId")
     ? and(eq(syncAction.model, "Issue"), eq(syncAction.action, "U"), dsql`${syncAction.prev} ? 'projectId'`, dsql`(${syncAction.prev} ->> 'projectId') = ${projectId}`)
     : undefined;
   return and(
     eq(syncAction.workspaceId, workspaceId),
-    or(and(inArray(syncAction.modelId, issuesOf(projectId)), or(
+    or(and(projectId === null ? undefined : inArray(syncAction.modelId, issuesOf(projectId)), or(
       changes,
       level === "outcomes" ? undefined : and(eq(syncAction.model, "Issue"), inArray(syncAction.action, ["I", "A"])),
       LEVEL_FIELDS[level].includes(DESCRIPTION_FIELD) ? and(eq(syncAction.model, "Document"), eq(syncAction.action, "U")) : undefined,
@@ -78,66 +86,81 @@ const SETTING_MODELS = ["Label", "WorkflowState"];
 /**
  * The project's state and label actions the Timeline says: every creation and deletion, and changes of SETTING_FIELDS
  * (not colors or order). Its states and labels are those with a row in it, and deleted ones whose creation or deletion
- * named it.
+ * named it; the workspace's are all of them.
  */
-function settingsOf(projectId: string, workspaceId: string): SQL {
+function settingsOf({ workspaceId, projectId }: Scope): SQL {
   const settings = and(eq(syncAction.workspaceId, workspaceId), inArray(syncAction.model, SETTING_MODELS));
+  const fields = dsql.join(SETTING_FIELDS.map((f) => dsql`${f}`), dsql`, `);
+  const said = or(ne(syncAction.action, "U"), dsql`${syncAction.data} ?| array[${fields}]::text[]`);
+  if (projectId === null) return and(settings, said)!;
   const ids = dsql`select ${label.id} from ${label} where ${label.projectId} = ${projectId}
     union all select ${workflowState.id} from ${workflowState} where ${workflowState.projectId} = ${projectId}
     union all select ${syncAction.modelId} from ${syncAction} where ${settings} and ${syncAction.action} in ('I', 'D') and ${syncAction.data} ->> 'projectId' = ${projectId}`;
-  const fields = dsql.join(SETTING_FIELDS.map((f) => dsql`${f}`), dsql`, `);
-  return and(settings, dsql`${syncAction.modelId} in (${ids})`, or(ne(syncAction.action, "U"), dsql`${syncAction.data} ?| array[${fields}]::text[]`))!;
+  return and(settings, dsql`${syncAction.modelId} in (${ids})`, said)!;
 }
 
-/** Live comments on the project's issues (a deleted one leaves only a tombstone, which says nothing). */
-const commentsOf = (projectId: string) => and(inArray(comment.issueId, issuesOf(projectId)), isNull(comment.deletedAt));
+/** Live comments on the scope's issues (a deleted one leaves only a tombstone, which says nothing). */
+const commentsOf = ({ workspaceId, projectId }: Scope) =>
+  and(projectId === null ? eq(comment.workspaceId, workspaceId) : inArray(comment.issueId, issuesOf(projectId)), isNull(comment.deletedAt));
 
-/** Every item of the project's history at the level with its size, for pageStart. */
-function items(projectId: string, workspaceId: string, level: HistoryLevel, upTo: (at: PgColumn) => SQL): SQL {
-  const parts = [dsql`select ${syncAction.createdAt} as at, ${ITEM_BYTES}::int as n from ${syncAction} where ${entriesOf(projectId, workspaceId, level)} and ${upTo(syncAction.createdAt)}`];
+/** Every item of the scope's history at the level with its size, for pageStart. */
+function items(scope: Scope, level: HistoryLevel, upTo: (at: PgColumn) => SQL): SQL {
+  const parts = [dsql`select ${syncAction.createdAt} as at, ${ITEM_BYTES}::int as n from ${syncAction} where ${entriesOf(scope, level)} and ${upTo(syncAction.createdAt)}`];
   if (levelComments(level)) {
-    parts.push(dsql`select ${comment.createdAt}, least(octet_length(${comment.body}), ${COMMENT_EXCERPT * 4}) + ${ITEM_BYTES} from ${comment} where ${commentsOf(projectId)} and ${upTo(comment.createdAt)}`);
+    parts.push(dsql`select ${comment.createdAt}, least(octet_length(${comment.body}), ${COMMENT_EXCERPT * 4}) + ${ITEM_BYTES} from ${comment} where ${commentsOf(scope)} and ${upTo(comment.createdAt)}`);
   }
-  if (levelSettings(level)) parts.push(dsql`select ${syncAction.createdAt}, ${ITEM_BYTES} from ${syncAction} where ${settingsOf(projectId, workspaceId)} and ${upTo(syncAction.createdAt)}`);
+  if (levelSettings(level)) parts.push(dsql`select ${syncAction.createdAt}, ${ITEM_BYTES} from ${syncAction} where ${settingsOf(scope)} and ${upTo(syncAction.createdAt)}`);
   return dsql.join(parts, dsql` union all `);
 }
 
-/** A page for a reader, counted against their read budget like an issue's (history.ts). */
-export function readProjectHistory(userId: string, projectId: string, level: HistoryLevel, until?: string): Promise<ProjectHistory | null | "rate_limited"> {
-  return metered(userId, PROJECT_PAGE_BYTES * 2, () => projectHistory(projectId, level, until));
+/**
+ * A page for a reader, counted against their read budget like an issue's (history.ts): of a project (`projectId`), or of
+ * the whole workspace (`workspaceId`), whose access the caller has checked.
+ */
+export function readProjectHistory(
+  userId: string,
+  of: { projectId: string } | { workspaceId: string },
+  level: HistoryLevel,
+  until?: string,
+): Promise<ProjectHistory | null | "rate_limited"> {
+  return metered(userId, PROJECT_PAGE_BYTES * 2, () => projectHistory(of, level, until));
 }
 
-/** The newest page of the project's history at the level, at or before `until`; null when there is no such project. */
-async function projectHistory(projectId: string, level: HistoryLevel, until?: string): Promise<ProjectHistory | null> {
+/** The newest page of the scope's history at the level, at or before `until`; null when there is no such project or workspace. */
+async function projectHistory(of: { projectId: string } | { workspaceId: string }, level: HistoryLevel, until?: string): Promise<ProjectHistory | null> {
   return db.transaction(
     async (tx) => {
-      const [row] = await tx
-        .select({ s: workspace.lastSyncId, workspaceId: project.workspaceId })
-        .from(project)
-        .innerJoin(workspace, eq(workspace.id, project.workspaceId))
-        .where(eq(project.id, projectId));
+      const [row] =
+        "projectId" in of
+          ? await tx
+              .select({ s: workspace.lastSyncId, workspaceId: project.workspaceId })
+              .from(project)
+              .innerJoin(workspace, eq(workspace.id, project.workspaceId))
+              .where(eq(project.id, of.projectId))
+          : await tx.select({ s: workspace.lastSyncId, workspaceId: workspace.id }).from(workspace).where(eq(workspace.id, of.workspaceId));
       if (!row) return null;
-      const { from, older } = await pageStart(tx, (upTo) => items(projectId, row.workspaceId, level, upTo), until, PROJECT_PAGE_BYTES);
+      const scope: Scope = { workspaceId: row.workspaceId, projectId: "projectId" in of ? of.projectId : null };
+      const { from, older } = await pageStart(tx, (upTo) => items(scope, level, upTo), until, PROJECT_PAGE_BYTES);
       const page = inPage(from, until);
       const [log, comments, settings] = await Promise.all([
         tx
           // A description's own text stays out: an entry only says it changed.
           .select({ id: syncAction.id, m: syncAction.model, i: syncAction.modelId, a: syncAction.action, by: syncAction.actorId, at: syncAction.createdAt, d: dsql<unknown>`${syncAction.data} - 'doc'`, p: syncAction.prev })
           .from(syncAction)
-          .where(and(entriesOf(projectId, row.workspaceId, level), page(syncAction.createdAt)))
+          .where(and(entriesOf(scope, level), page(syncAction.createdAt)))
           .orderBy(asc(syncAction.id)),
         levelComments(level)
           ? tx
               .select({ id: comment.id, i: comment.issueId, by: comment.authorId, at: comment.createdAt, x: dsql<string>`left(${comment.body}, ${COMMENT_EXCERPT})`, r: comment.parentId })
               .from(comment)
-              .where(and(commentsOf(projectId), page(comment.createdAt)))
+              .where(and(commentsOf(scope), page(comment.createdAt)))
               .orderBy(asc(comment.createdAt))
           : Promise.resolve([]),
         levelSettings(level)
           ? tx
               .select({ id: syncAction.id, m: syncAction.model, mid: syncAction.modelId, a: syncAction.action, by: syncAction.actorId, at: syncAction.createdAt, d: syncAction.data, p: syncAction.prev })
               .from(syncAction)
-              .where(and(settingsOf(projectId, row.workspaceId), page(syncAction.createdAt)))
+              .where(and(settingsOf(scope), page(syncAction.createdAt)))
               .orderBy(asc(syncAction.id))
           : Promise.resolve([]),
       ]);

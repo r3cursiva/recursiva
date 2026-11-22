@@ -4,7 +4,7 @@
 // An issue's day is one row that opens into its steps, and a step reads in the same columns. Nothing wraps on a wide
 // screen; on a phone the issue is the first line and the rest a second one.
 import { ArchiveIcon, CaretRightIcon, ChatCircleIcon, GitCommitIcon, GitMergeIcon, GitPullRequestIcon, PlusCircleIcon } from "@phosphor-icons/react";
-import { startedStage, type Issue, type Project } from "@rsva/schema/models";
+import type { Issue, Project } from "@rsva/schema/models";
 import { Button } from "@rsva/ui/components/button";
 import { StateIcon } from "@rsva/ui/components/state-icon";
 import { AgentAvatar, UserAvatarStack } from "@rsva/ui/components/user-avatar";
@@ -13,7 +13,7 @@ import { observer } from "mobx-react-lite";
 import { Fragment, useState, type ReactNode } from "react";
 import { face } from "../lib/face.ts";
 import { githubWords } from "@rsva/display/github";
-import { dayTotals, oneLine, pullsOf, span, type ChainLink, type Day, type Pull, type Row, type Step, type StateKind, type Tally, type Total } from "../lib/project-history.ts";
+import { dayTotals, isAgentIn, oneLine, pullsOf, span, type ChainLink, type Day, type Pull, type Row, type Step, type StateKind, stateKindIn, type Tally, type Total } from "@rsva/display/project-history";
 import { exactTime } from "../lib/time.ts";
 import { paths } from "../router.ts";
 import { store } from "../store.ts";
@@ -44,16 +44,9 @@ function dayTitle(key: string, now: Date): { name: string; date: string; today: 
   return { name, date: name === date ? "" : date, today: days === 0, planned: false };
 }
 
-export function stateKind(stateId: string): StateKind {
-  const s = store.states.get(stateId);
-  if (!s) return "other";
-  if (s.group === "completed") return "done";
-  if (s.group === "cancelled") return "canceled";
-  const stage = s.group === "started" ? startedStage(store.statesOf(s.projectId), s.id) : undefined;
-  return stage === "review" || stage === "approved" ? stage : "other";
-}
+export const stateKind = (stateId: string): StateKind => stateKindIn(store, stateId);
 
-export const isAgent = (id: string | null) => !!id && store.users.get(id)?.kind === "agent";
+export const isAgent = (id: string | null) => isAgentIn(store, id);
 
 /** The issue waits on the viewer: it is in review and they created it, so the review is theirs (as the inbox asks). */
 function waitsForMe(issueId: string): boolean {

@@ -86,6 +86,26 @@ test("GET /sync/project-history: 400 for a level or until it does not know, 404 
   assert.equal((await owner(url(elsewhere.project.id, "steps"))).status, 404);
 });
 
+test("GET /sync/project-history without a project: the whole workspace's, every project's issues and comments (RSVA-643)", async () => {
+  const here = randomUUID();
+  const there = randomUUID();
+  await as(ws.ownerId, [{ op: "create", m: "Issue", id: here, projectId: refs.project.id, set: { title: "here", stateId: refs.states[0]!.id } }]);
+  await as(ws.ownerId, [{ op: "create", m: "Issue", id: there, projectId: refs.other.id, set: { title: "there", stateId: refs.otherStates[0]!.id } }]);
+  await as(ws.ownerId, [{ op: "update", m: "Issue", id: here, set: { priority: 1 } }]);
+  await as(ws.agentId, [say(there, "seen")]);
+  const r = await owner(`${server.url}/sync/project-history?ws=${ws.slug}&level=steps`);
+  assert.equal(r.status, 200);
+  const h = (await r.json()) as ProjectHistory;
+  const issues = new Set(h.history.map((e) => e.i));
+  assert.ok(issues.has(here) && issues.has(there), "both projects' issues");
+  assert.deepEqual(h.comments.filter((c) => c.i === there).map((c) => c.x), ["seen"]);
+  const one = await read("steps");
+  assert.ok(!one.history.some((e) => e.i === here), "a project's history keeps to the project");
+  assert.equal((await owner(`${server.url}/sync/project-history?level=steps`)).status, 404, "neither a project nor a workspace");
+  const foreign = await importFixture("sample", undefined, 4);
+  assert.equal((await owner(`${server.url}/sync/project-history?ws=${foreign.slug}&level=steps`)).status, 404, "a workspace the viewer is not in");
+});
+
 test("GET /sync/project-history comes in pages: newest first, `until` gives the one before, nothing lost or doubled", async () => {
   const id = randomUUID();
   await as(ws.ownerId, [{ op: "create", m: "Issue", id, projectId: refs.other.id, set: { title: "busy", stateId: refs.otherStates[0]!.id } }]);

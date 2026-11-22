@@ -5,6 +5,7 @@
 // issues'. Each day carries a summary of what agents and people did. Pure: the screen passes what it reads from the store.
 import type { HistoryLevel, ProjectComment, ProjectHistoryEntry, ProjectSettingEntry } from "@rsva/protocol";
 import { localDay } from "@rsva/schema/days";
+import { startedStage, type WorkflowState } from "@rsva/schema/models";
 import { groupBy } from "@rsva/schema/util";
 import { plural } from "@rsva/schema/util";
 
@@ -54,6 +55,26 @@ export interface Day {
 
 /** What a state means for the summary: the issue was finished or dropped, asked for review or approved. */
 export type StateKind = "done" | "canceled" | "review" | "approved" | "other";
+
+/** Where a workspace's states and people are read: the web's store, the TUI's engine. */
+export interface FoldSource {
+  states: { get(id: string): Pick<WorkflowState, "id" | "group" | "projectId"> | undefined };
+  statesOf(projectId: string): readonly Pick<WorkflowState, "id" | "group">[];
+  users: { get(id: string): { kind?: string } | undefined };
+}
+
+/** What a state means for the day's totals: finished, dropped, a review or an approval by its place among the started ones. */
+export function stateKindIn(s: FoldSource, stateId: string): StateKind {
+  const st = s.states.get(stateId);
+  if (!st) return "other";
+  if (st.group === "completed") return "done";
+  if (st.group === "cancelled") return "canceled";
+  const stage = st.group === "started" ? startedStage(s.statesOf(st.projectId), st.id) : undefined;
+  return stage === "review" || stage === "approved" ? stage : "other";
+}
+
+/** Whether a person is an agent. */
+export const isAgentIn = (s: Pick<FoldSource, "users">, id: string | null): boolean => !!id && s.users.get(id)?.kind === "agent";
 
 export interface FoldContext {
   level: HistoryLevel;
