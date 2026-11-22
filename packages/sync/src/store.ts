@@ -362,8 +362,8 @@ export interface SyncStore {
 
   /** Comments, reactions and history of an issue; the first call starts loading them. */
   feed(issueId: string): IssueFeed;
-  /** A project's history at a level (PLNR-71); the first call starts loading it. */
-  projectHistory(projectId: string, level: HistoryLevel): ProjectHistoryFeed;
+  /** A project's history at a level (PLNR-71), or the whole workspace's with null (RSVA-643); the first call starts loading it. */
+  projectHistory(projectId: string | null, level: HistoryLevel): ProjectHistoryFeed;
   /** Adds a comment (Markdown) at once and returns it; `parentId` makes it a reply to a top-level comment. */
   addComment(issueId: string, body: string, parentId?: string | null): Comment;
   /** Own comments only; the server rejects anyone else's, and the edit reverts. */

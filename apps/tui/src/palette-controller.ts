@@ -122,6 +122,7 @@ function rootEntries(app: App): Command[] {
     { section: "COMMANDS", label: "Undo the last change", shortcut: "u", run: () => app.undo() },
     { section: "COMMANDS", label: "Create an issue…", shortcut: "c", run: () => app.newIssue(false) },
     { section: "COMMANDS", label: `Dispatch queue: ${app.queueSource()}`, shortcut: "g q", run: () => app.startQueue() },
+    { section: "COMMANDS", label: "Activity: the latest across every project", shortcut: "g a", run: () => app.openActivity() },
     {
       section: "COMMANDS",
       label: "Filter with a query…",

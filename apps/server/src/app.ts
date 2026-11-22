@@ -251,15 +251,21 @@ export function buildApp(opts: AppOptions = {}) {
     return sendPage(reply, await readFeeds(req.actor!.userId, access.workspaceId, ids as string[] | undefined));
   });
 
-  // A project's history (PLNR-71): its issues' changes and comments at a level, newest first, a page at a time.
-  app.get<{ Querystring: { project?: string; level?: string; until?: string } }>("/sync/project-history", signedIn, async (req, reply) => {
-    const { project: projectId, level, until } = req.query;
-    if (!projectId || !UUID.test(projectId)) return reply.code(404).send();
+  // A project's history (PLNR-71): its issues' changes and comments at a level, newest first, a page at a time. Without a
+  // project, the whole workspace's that `ws` names (RSVA-643).
+  app.get<{ Querystring: { project?: string; ws?: string; level?: string; until?: string } }>("/sync/project-history", signedIn, async (req, reply) => {
+    const { project: projectId, ws, level, until } = req.query;
+    if (projectId === undefined ? !ws : !UUID.test(projectId)) return reply.code(404).send();
     if (!isHistoryLevel(level)) return reply.code(400).send({ error: "invalid", message: `level: one of ${HISTORY_LEVELS.join(", ")}` });
     if (until !== undefined && !isServerTime(until)) return badUntil(reply);
+    if (projectId === undefined) {
+      const access = await accessBySlug(req.actor!, ws!);
+      if ("status" in access) return reply.code(404).send();
+      return sendPage(reply, await readProjectHistory(req.actor!.userId, { workspaceId: access.workspaceId }, level, until));
+    }
     const [p] = await db.select({ ws: schema.project.workspaceId }).from(schema.project).where(eq(schema.project.id, projectId));
     if (!p || "status" in (await accessById(req.actor!, p.ws))) return reply.code(404).send();
-    return sendPage(reply, await readProjectHistory(req.actor!.userId, projectId, level, until));
+    return sendPage(reply, await readProjectHistory(req.actor!.userId, { projectId }, level, until));
   });
 
   // A cycle's burn-up (PLNR-63): the counts of its days that are over, in the viewer's zone (`tz`, UTC without it); the

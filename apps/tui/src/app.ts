@@ -25,10 +25,12 @@ import { draftCard, draftOf, HOW, lineContext, type Creating, type Draft } from 
 import { Flow } from "./flow.ts";
 import { Grid, GridScreen } from "./grid.ts";
 import { cardAnchor, paintHome, scrollTop, layout, type HomeView } from "./home.ts";
+import { paintActivity } from "./activity.ts";
+import { ACTIVITY_LEVEL, activityView, type ActivityView } from "./activity-view.ts";
 import type { Seg } from "./widgets.ts";
 import { activityOf, cardOf, detailsOf, rowsOf, stateMark, type AgentOn } from "./home-view.ts";
 import { issueAnchor, paintIssue, type IssueView } from "./issue.ts";
-import { changed, cursorKey, helpOf, hintsOf, ISSUE_KEYS, LIST_KEYS, press, type Held } from "./keys.ts";
+import { ACTIVITY_KEYS, changed, cursorKey, helpOf, hintsOf, ISSUE_KEYS, LIST_KEYS, press, type Held } from "./keys.ts";
 import { dimBehind, paintConfirm, paintCreate, paintHelp, paintStatePicker, shown, type Picker } from "./panels.ts";
 import { paletteKey, paletteView, showPage, type IssuePage, type Palette } from "./palette-controller.ts";
 import { paintPalette } from "./palette.ts";
@@ -73,6 +75,7 @@ const REPLY_KEYS: HomeView["keys"] = [
   ["Esc", "leave the reply"],
 ];
 const ISSUE_HELP = helpOf(ISSUE_KEYS);
+const ACTIVITY_HELP = helpOf(ACTIVITY_KEYS);
 
 interface Ui {
   selected: number;
@@ -99,11 +102,19 @@ interface Ui {
 /** The issue screen: which issue, what it was opened from, the first body line shown and a page's lines. */
 interface Reading {
   id: string;
-  from: "list" | "queue";
+  from: "list" | "queue" | "activity";
   top: number;
   page: number;
   /** Where each heading of what scrolls starts, as the last frame laid it out: Tab and Shift+Tab go there. */
   heads?: number[];
+}
+
+/** The Activity screen (RSVA-643): its cursor, counting every day's rows, and the first line shown. */
+interface Watching {
+  selected: number;
+  top: number;
+  /** The cursor's row (ActivityItem.id): it stays on it as new rows come above. */
+  on?: string;
 }
 
 /** What the screens' keys and the palette act on: the run's state and its moves. */
@@ -134,6 +145,15 @@ export interface App {
   selectRow(at: number): void;
   reading(): Reading | null;
   read(id: string, from: Reading["from"]): void;
+  /** The Activity screen, null when it is not open. */
+  watching(): Watching | null;
+  /** The Activity screen over the list (g a); Esc goes back to the list. */
+  openActivity(): void;
+  closeActivity(): void;
+  /** The Activity's cursor on row `at`, kept within its rows; at the last one the earlier days are asked for. */
+  selectActivity(at: number): void;
+  /** The Activity's rows on screen now, for a page. */
+  activityRows(): number;
   /** An issue chosen in the palette, opened with the cursor on it: in this list if it is there, else in its project's. */
   openIssue(id: string): void;
   stopReading(): void;
@@ -230,6 +250,13 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
   let before = 0;
   /** The issue screen, null on the list; observed, so that its issue's description and comments draw frames. */
   const reading = observable.box<Reading | null>(null, { deep: false });
+  /** The Activity screen, null when it is not open; observed, so that its history draws frames as it comes. */
+  const watching = observable.box<Watching | null>(null, { deep: false });
+  /** The Activity as the last change left it: the keys and the frame read its rows. */
+  let activityNow: ActivityView | null = null;
+  /** The Activity's rows in order, as its cursor counts them. */
+  const activityList = () => activityNow?.days.flatMap((d) => d.items) ?? [];
+  const activityIssue = (w: Watching) => activityList()[w.selected]?.issueId;
   const agents = observable.box<ReadonlyMap<string, AgentOn>>(new Map());
   let items: Item[] = [];
   /** Each listed issue's state when the list was made: the rows change in place, so the list keeps what it saw. */
@@ -257,7 +284,13 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
 
   const target = (): Issue | undefined => {
     const r = reading.get();
-    return r ? store.issues.get(r.id) : items[ui.selected]?.issue;
+    const w = watching.get();
+    if (r) return store.issues.get(r.id);
+    if (w) {
+      const id = activityIssue(w);
+      return id ? store.issues.get(id) : undefined;
+    }
+    return items[ui.selected]?.issue;
   };
 
   const listRows = () => layout(process.stdout.rows, process.stdout.columns).list[1];
@@ -308,6 +341,7 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
 
   const setQuery = (q: string) => {
     stopReading();
+    runInAction(() => watching.set(null));
     ui.selected = 0;
     ui.top = 0;
     runInAction(() => query.set(q));
@@ -348,6 +382,7 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
     queueSource,
     startQueue() {
       stopReading();
+      runInAction(() => watching.set(null));
       flow.startQueue(
         items.map((i) => i.issue.id),
         queueSource(),
@@ -357,7 +392,24 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
     selectRow,
     reading: () => reading.get(),
     read,
+    watching: () => watching.get(),
+    openActivity() {
+      stopReading();
+      held.chord = "";
+      runInAction(() => watching.set({ selected: 0, top: 0 }));
+    },
+    closeActivity: () => runInAction(() => watching.set(null)),
+    selectActivity(at) {
+      const w = watching.get();
+      const list = activityList();
+      if (!w || !list.length) return;
+      w.selected = Math.max(0, Math.min(at, list.length - 1));
+      w.on = list[w.selected]!.id;
+      if (w.selected === list.length - 1 && activityNow?.older) store.projectHistory(null, ACTIVITY_LEVEL).loadOlder();
+    },
+    activityRows: () => Math.max(1, process.stdout.rows - 5),
     openIssue(id) {
+      runInAction(() => watching.set(null));
       const at = items.findIndex((x) => x.issue.id === id);
       if (at >= 0) ui.selected = at;
       else {
@@ -558,7 +610,7 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
     const now = Date.now();
     const at = items.findIndex((i) => i.issue.id === r.id);
     return {
-      source: r.from === "queue" ? "Queue" : queueSource(),
+      source: r.from === "queue" ? "Queue" : r.from === "activity" ? "Activity" : queueSource(),
       place: r.from === "list" && at >= 0 ? { at: at + 1, of: items.length, ...neighbours(r.id) } : null,
       ...withDetails(issue, now),
       properties: ui.properties,
@@ -703,6 +755,12 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
         r.page = shown.page;
         r.heads = shown.heads;
         inView = shown.pictures;
+      } else if (watching.get() && activityNow) {
+        const w = watching.get()!;
+        const keys = ui.picker ? v.keys : hintsOf(ACTIVITY_KEYS, size.columns < 120, app);
+        const shown = paintActivity({ ...activityNow, selected: w.selected, top: w.top, statusLine: v.status, keys }, size);
+        grid = shown.grid;
+        w.top = shown.top;
       } else {
         // ? is a letter of a new issue's line: the keys line does not offer it.
         const home = paintHome(v, size, ui.input !== null ? "query syntax" : ui.create ? "" : undefined);
@@ -730,7 +788,8 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
       if (ui.help) {
         dimBehind(grid);
         outside(grid);
-        paintHelp(grid, rv ? "issue" : "list", rv ? ISSUE_HELP : LIST_HELP);
+        const w = !rv && watching.get();
+        paintHelp(grid, rv ? "issue" : w ? "activity" : "list", rv ? ISSUE_HELP : w ? ACTIVITY_HELP : LIST_HELP);
       }
       if (ui.palette) {
         dimBehind(grid);
@@ -787,6 +846,13 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
     if (shown) {
       cardOf(store, shown, Date.now());
       activityOf(store, shown, Date.now());
+    }
+    // The Activity's history and the issues it names: a change of either draws it again.
+    activityNow = watching.get() && store.status === "ready" ? activityView(store, store.workspace?.name ?? api.workspace, Date.now()) : null;
+    const w = watching.get();
+    if (w?.on && activityNow) {
+      const at = activityList().findIndex((it) => it.id === w.on);
+      if (at >= 0) w.selected = at;
     }
     store.connection;
     if (store.status === "ready") stats.loaded();
@@ -885,6 +951,17 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
       else say(`${plain(to![1]!)} is not in this workspace`, true);
       return;
     }
+    // A click on the Activity's row selects it; on the selected row, opens it.
+    const w = !r && watching.get();
+    const act = w && /^act:(\d+)$/.exec(key);
+    if (w && act) {
+      held.chord = "";
+      const at = Number(act[1]);
+      const id = at === w.selected && activityIssue(w);
+      if (id) read(id, "activity");
+      else app.selectActivity(at);
+      return;
+    }
     // A click on a row selects it; on the selected row, opens it.
     const row = !r && /^row:(\d+)$/.exec(key);
     if (row && items[Number(row[1])]) {
@@ -894,7 +971,7 @@ export async function runTui(api: Client, host: TuiHost): Promise<TuiEnd> {
       else selectRow(at);
       return;
     }
-    press(r ? ISSUE_KEYS : LIST_KEYS, app, key, held);
+    press(r ? ISSUE_KEYS : w ? ACTIVITY_KEYS : LIST_KEYS, app, key, held);
   }
 
   /**

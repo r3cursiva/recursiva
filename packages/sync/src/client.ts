@@ -720,7 +720,7 @@ class Engine implements SyncEngine, FeedHost, LinkHost, TabHost {
     return this.feeds.feed(issueId);
   }
 
-  projectHistory(projectId: string, level: HistoryLevel): ProjectFeed {
+  projectHistory(projectId: string | null, level: HistoryLevel): ProjectFeed {
     return this.feeds.projectHistory(projectId, level);
   }
 

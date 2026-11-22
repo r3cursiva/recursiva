@@ -17,7 +17,7 @@ import { openPulls, pullLabel, watchPulls } from "../lib/github.ts";
 import { openAsList, runWidget } from "../lib/home.ts";
 import { ASK_LABELS, asksViewer, collect, dueText, toTriage, type WorkItem } from "../lib/my-work.ts";
 import { burnSeries, cycleProgress, cycleRange, daysLeft, paceEnd } from "../lib/cycles.ts";
-import { foldHistory, stepsOf, type Row } from "../lib/project-history.ts";
+import { foldHistory, stepsOf, type Row } from "@rsva/display/project-history";
 import { useNow } from "../lib/time.ts";
 import { Link } from "../link.tsx";
 import { paths } from "../router.ts";

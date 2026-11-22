@@ -109,8 +109,10 @@ export class FeedCache {
     return feed;
   }
 
-  projectHistory(projectId: string, level: HistoryLevel): ProjectFeed {
-    const feed = recent(this.projectFeeds, `${projectId}:${level}`, () => new ProjectFeed(projectId, level, (q) => this.fetchProjectHistory(q), warn));
+  projectHistory(projectId: string | null, level: HistoryLevel): ProjectFeed {
+    // The workspace's (null) is asked for by its slug: the query names no project.
+    const scope = projectId === null ? `ws=${encodeURIComponent(this.host.slug)}&` : "";
+    const feed = recent(this.projectFeeds, `${projectId ?? "*"}:${level}`, () => new ProjectFeed(projectId, level, (q) => this.fetchProjectHistory(scope + q), warn));
     for (const [k, old] of this.projectFeeds) if (this.projectFeeds.size > MAX_PROJECT_FEEDS && !old.loadingOlder) this.projectFeeds.delete(k);
     // Called from render: the load starts outside the reactive context.
     if (feed.due(Date.now(), FEED_RETRY_MS)) queueMicrotask(() => void feed.load());

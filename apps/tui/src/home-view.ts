@@ -257,12 +257,12 @@ function commentView(s: Pick<SyncStore, "users">, feed: IssueFeed, c: Comment): 
   };
 }
 
-const QUIET = { fg: "ink-3" } as const;
-const SAID = { fg: "ink-2" } as const;
-const DOT: Seg = ["·", { fg: "faint" }];
+export const QUIET = { fg: "ink-3" } as const;
+export const SAID = { fg: "ink-2" } as const;
+export const DOT: Seg = ["·", { fg: "faint" }];
 
 /** A person in the history, by email as the TUI names people; one the store does not have, as the web says it. */
-const someone = (s: Pick<HomeSource, "users">, id: unknown) => {
+export const someone = (s: Pick<HomeSource, "users">, id: unknown) => {
   const u = typeof id === "string" ? s.users.get(id) : undefined;
   return u ? plain(u.name || u.email) : REMOVED.user;
 };
@@ -295,10 +295,10 @@ function partSegs(s: HomeSource, p: HistoryPart): Seg[] {
   return [[priorityName(p.priority), SAID]];
 }
 
-const sentence = (s: HomeSource, parts: readonly HistoryPart[]) => parts.flatMap((p) => partSegs(s, p));
+export const sentence = (s: HomeSource, parts: readonly HistoryPart[]) => parts.flatMap((p) => partSegs(s, p));
 
 /** A line's one-cell mark: a state change's new state, its glyph in its tone; anything else a quiet dot. */
-function markOf(s: HomeSource, icon: HistoryIcon): Seg {
+export function markOf(s: HomeSource, icon: HistoryIcon): Seg {
   const st = icon.kind === "state" && typeof icon.state === "string" ? s.states.get(icon.state) : undefined;
   if (!st) return DOT;
   const m = stateMark(s, st);
@@ -306,7 +306,7 @@ function markOf(s: HomeSource, icon: HistoryIcon): Seg {
 }
 
 /** What GitHub did, in the web's words (githubWords) without its chips: "GitHub moved it from ◐ In Progress to ● Done · #412 Title merged by dan". */
-function githubRow(s: HomeSource, e: HistoryEntry, gh: GithubEvent): Pick<Extract<ActivityRow, { kind: "event" }>, "mark" | "who" | "text"> {
+export function githubRow(s: HomeSource, e: HistoryEntry, gh: GithubEvent): Pick<Extract<ActivityRow, { kind: "event" }>, "mark" | "who" | "text"> {
   const { line, who, verb, stays } = githubWords(gh, !!e.d.stateId);
   const title: Seg = [` ${plain(gh.title)}`, QUIET];
   const subject: Seg[] = gh.number !== null ? [[`#${gh.number}`, SAID], title] : gh.sha ? [[gh.sha.slice(0, SHA_SHOWN), SAID], title] : [["branch ", QUIET], [plain(gh.title), SAID]];

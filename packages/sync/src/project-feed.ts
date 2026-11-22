@@ -1,5 +1,6 @@
 // A project's history at one level (PLNR-71), as its History page reads it: pages from the server, newest first, and
-// the workspace's deltas on top while the page is open. Entries, comments and the project's own changes are kept as the
+// the workspace's deltas on top while the page is open. Without a project (null), the whole workspace's: the TUI's
+// Activity (RSVA-643). Entries, comments and the project's own changes are kept as the
 // server sends them; the page folds them into days and stories. Creations come from the issues in the pool; an I entry
 // only says what one started with.
 import {
@@ -49,12 +50,13 @@ export class ProjectFeed implements ProjectHistoryFeed {
   private s = -1;
   private gen = 0;
   private started = false;
-  readonly projectId: string;
+  /** The project, or null for every project of the workspace. */
+  readonly projectId: string | null;
   readonly level: HistoryLevel;
   private readonly fetchPage: FetchPage;
   private readonly warn: (e: unknown) => void;
 
-  constructor(projectId: string, level: HistoryLevel, fetchPage: FetchPage, warn: (e: unknown) => void) {
+  constructor(projectId: string | null, level: HistoryLevel, fetchPage: FetchPage, warn: (e: unknown) => void) {
     this.projectId = projectId;
     this.level = level;
     this.fetchPage = fetchPage;
@@ -72,7 +74,7 @@ export class ProjectFeed implements ProjectHistoryFeed {
   }
 
   private query(until?: string): string {
-    const q = new URLSearchParams({ project: this.projectId, level: this.level });
+    const q = new URLSearchParams({ ...(this.projectId !== null && { project: this.projectId }), level: this.level });
     if (until) q.set("until", until);
     return q.toString();
   }
@@ -154,19 +156,24 @@ export class ProjectFeed implements ProjectHistoryFeed {
     const d = a.d ?? {};
     if (a.m === "Comment" && a.a === "I") {
       const i = d.issueId as string;
-      if (!levelComments(this.level) || projectOf(i) !== this.projectId) return null;
+      if (!levelComments(this.level) || !this.holds(projectOf(i))) return null;
       const at = (d.createdAt as string | undefined) ?? new Date().toISOString();
       return { id: a.id, comment: { id: a.mid, i, by: a.by ?? null, at, x: String(d.body ?? "").slice(0, COMMENT_EXCERPT), r: (d.parentId as string | null | undefined) ?? null } };
     }
     // A new issue is not in the pool yet: its action names the project. A move (PLNR-448) is in the history of the project
     // it leaves (the pool's, read before the move applies) and of the one it goes to (the action's).
-    if (!entry || ((projectOf(a.mid) ?? (a.a === "I" ? d.projectId : undefined)) !== this.projectId && d.projectId !== this.projectId)) return null;
+    if (!entry || (!this.holds(projectOf(a.mid) ?? (a.a === "I" ? d.projectId : undefined)) && d.projectId !== this.projectId)) return null;
     const e = atLevel({ ...entry, i: a.mid }, this.level);
     return e && { id: a.id, entry: e };
   }
 
   private settingOf(a: Action, s: SettingDelta): Item | null {
-    return levelSettings(this.level) && s.projectId === this.projectId ? { id: a.id, setting: s.entry } : null;
+    return levelSettings(this.level) && (this.projectId === null || s.projectId === this.projectId) ? { id: a.id, setting: s.entry } : null;
+  }
+
+  /** Whether a change of an issue in `projectId` is this history's: the project's, or any of the workspace's. */
+  private holds(projectId: unknown): boolean {
+    return this.projectId === null ? projectId !== undefined : projectId === this.projectId;
   }
 
   private add(item: Item): void {

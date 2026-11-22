@@ -143,6 +143,7 @@ export const LIST_KEYS: readonly Binding[] = [
   DISPATCH,
   MENU,
   { keys: ["g q"], hint: ["g q", "queue"], wide: true, help: ["g q", "a queue through this list"], run: (app) => app.startQueue() },
+  { keys: ["g a"], help: ["g a", "the activity: the latest across every project"], run: (app) => app.openActivity() },
   { ...BROWSER, hint: ["o", "browser"], wide: true },
   EDIT,
   COPY,
@@ -219,4 +220,32 @@ export const ISSUE_KEYS: readonly Binding[] = [
   CLICK_CARD,
   DRAG,
   QUIT,
+];
+
+// ── The Activity (RSVA-643) ───────────────────────────────────────────────────────────────────────────────────────
+
+const activity = (to: (at: number, page: number, app: App) => number) => (app: App) => {
+  const w = app.watching();
+  if (w) app.selectActivity(to(w.selected, Math.max(1, app.activityRows() - 1), app));
+};
+
+export const ACTIVITY_KEYS: readonly Binding[] = [
+  { keys: ["j", "down"], hint: ["j/k", "move"], help: ["j k  ↑ ↓", "move"], run: activity((at) => at + 1) },
+  { keys: ["k", "up"], run: activity((at) => at - 1) },
+  { keys: ["pagedown", " "], help: ["PgUp PgDn", "a page up, down (fn ↑ ↓, Space)"], run: activity((at, page) => at + page) },
+  { keys: ["pageup", "b"], run: activity((at, page) => at - page) },
+  { keys: ["home", "g g"], help: ["Home End", "the newest, the oldest loaded (g g, G)"], run: activity(() => 0) },
+  { keys: ["end", "G"], run: activity(() => Number.MAX_SAFE_INTEGER) },
+  { keys: ["enter"], hint: ["↵", "open"], help: ["↵", "open the issue"], ...withIssue((app, i) => app.read(i.id, "activity")) },
+  STATE,
+  MENU,
+  { ...BROWSER, hint: ["o", "browser"], wide: true },
+  COPY,
+  COPY_KEY,
+  UNDO,
+  { keys: ["/"], help: ["/  ⌃K", "the palette"], run: (app) => app.openPalette() },
+  { keys: ["esc"], hint: ["Esc", "back"], help: ["Esc", "back to the list"], run: (app) => app.closeActivity() },
+  { keys: [], help: ["click", "a row: select, again: open; a hint: its key"] },
+  DRAG,
+  { ...QUIT, hint: ["q", "quit"], wide: true },
 ];

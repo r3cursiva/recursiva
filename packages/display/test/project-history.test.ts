@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProjectComment, ProjectHistoryEntry, ProjectSettingEntry } from "@rsva/protocol";
 import type { GithubEvent } from "@rsva/schema/models";
-import { dayKey, dayTotals, foldHistory, oneLine, span, stepsOf, type FoldContext, type StateKind, type Tally } from "./project-history.ts";
+import { dayKey, dayTotals, foldHistory, oneLine, span, stepsOf, type FoldContext, type StateKind, type Tally } from "../src/project-history.ts";
 
 const words = (agents: Tally, people: Tally) => dayTotals(agents, people).map((t) => `${t.text} (${t.agents}/${t.people})`);
 

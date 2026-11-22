@@ -491,17 +491,17 @@ test("the Timeline of both projects shows the move; the target's shows the issue
   const r = await move(i.id, dst.id);
   const id = r.actions[0]!.id;
   for (const level of ["steps", "everything"] as const) {
-    const s = await readProjectHistory(f.ws.ownerId, src.id, level);
-    const d = await readProjectHistory(f.ws.ownerId, dst.id, level);
+    const s = await readProjectHistory(f.ws.ownerId, { projectId: src.id }, level);
+    const d = await readProjectHistory(f.ws.ownerId, { projectId: dst.id }, level);
     assert.ok(s && s !== "rate_limited" && d && d !== "rate_limited");
     const out = s.history.find((e) => e.id === id);
     assert.ok(out, `${level}: the old project shows the move`);
     assert.equal(out.was, `${src.key}-1`);
     assert.ok(d.history.some((e) => e.id === id), `${level}: the new project shows it`);
   }
-  const all = await readProjectHistory(f.ws.ownerId, dst.id, "everything");
+  const all = await readProjectHistory(f.ws.ownerId, { projectId: dst.id }, "everything");
   assert.ok(all && all !== "rate_limited" && all.history.some((e) => e.i === i.id && "priority" in e.d), "the story before the move goes with it");
-  const outcomes = await readProjectHistory(f.ws.ownerId, src.id, "outcomes");
+  const outcomes = await readProjectHistory(f.ws.ownerId, { projectId: src.id }, "outcomes");
   assert.ok(outcomes && outcomes !== "rate_limited" && !outcomes.history.some((e) => e.id === id), "outcomes show no moves");
 });
 

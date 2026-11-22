@@ -11,6 +11,8 @@ import { layoutDescription, READING_LOOK } from "./description.ts";
 import { paintHome, type HomeView } from "./home.ts";
 import { activityOf, cardOf, rowsOf, similarField, type HomeSource } from "./home-view.ts";
 import { paintIssue, type ActivityRow, type CommentView, type IssueDetails, type IssueView } from "./issue.ts";
+import { activityView } from "./activity-view.ts";
+import { paintActivity } from "./activity.ts";
 import { MY_WORK } from "@rsva/terminal/issues";
 import { avatarTone, initials } from "@rsva/display/avatar";
 import { checksName } from "@rsva/display/github";
@@ -654,6 +656,65 @@ test("an issue's activity is the web's: history and threads in time order, the w
     ...view, at: "2026-10-28T10:00:00.000Z", time: clockTime("2026-10-28T10:00:00.000Z"), edited: false, via: null, deleted: true, body: "", reactions: [],
     replies: [{ ...view, at: "2026-11-06T07:44:00.000Z", time: clockTime("2026-11-06T07:44:00.000Z"), edited: true, via: null, deleted: false, body: "hi[2J", reactions: [{ emoji: "👍", count: 2 }] }],
   }, "a comment: cleaned, by name with the web's avatar, its time, a deleted one kept for its replies");
+});
+
+test("the Activity (RSVA-643): the workspace's history by day, newest first, an issue's day one row, what an open issue waits on", () => {
+  const a = issue(1, { title: "Fix the greeting", stateId: S.done.id, createdAt: "2026-10-01T10:00:00.000Z" });
+  const b = issue(2, { title: "Review the fix", stateId: S.todo.id, createdAt: "2026-11-06T09:00:00.000Z", blockedByIds: [] });
+  const c = issue(3, { title: "Ship it", stateId: S.progress.id, createdAt: "2026-10-01T10:00:00.000Z" });
+  let id = 0;
+  const e = (i: string, at: string, by: string, d: Record<string, unknown>, p: Record<string, unknown>) => ({ id: ++id, i, a: "U" as const, by, at, d, p });
+  const feed = {
+    status: "ready" as const,
+    entries: [
+      e(c.id, "2026-11-05T15:00:00.000Z", U.alex.id, { priority: 2 }, { priority: 0 }),
+      e(a.id, "2026-11-06T08:00:00.000Z", U.bot.id, { stateId: S.progress.id }, { stateId: S.todo.id }),
+      e(a.id, "2026-11-06T09:30:00.000Z", U.bot.id, { stateId: S.done.id }, { stateId: S.progress.id }),
+    ],
+    comments: [
+      { id: "m1", i: b.id, by: U.zoe.id, at: "2026-11-06T10:00:00.000Z", x: "**Looks** [good](https://x)", r: null },
+      { id: "m2", i: c.id, by: U.zoe.id, at: "2026-11-06T07:00:00.000Z", x: "on it", r: null },
+    ],
+    settings: [],
+    // The loaded history starts on Nov 1: issues created before it are not created in it.
+    older: "2026-11-01T00:00:00.000Z",
+    hasOlder: true,
+    loadingOlder: false,
+    loadOlder() {},
+  };
+  const asked: (string | null)[] = [];
+  const s = {
+    ...source([a, b, c]),
+    statesOf: () => Object.values(S),
+    githubOf: () => [],
+    projectHistory: (p: string | null) => (asked.push(p), feed),
+    // Ship it waits on Review the fix, which is open; Fix the greeting, done, waits on nothing.
+    relationsOf: (i: string) => ({ blockedBy: i === c.id ? [b, a] : [], blocks: [], related: [], duplicateOf: null, duplicates: [] }),
+  } as unknown as Parameters<typeof activityView>[0];
+  const v = activityView(s, "Atlas", NOW);
+  assert.deepEqual(asked, [null], "the whole workspace's history");
+  assert.deepEqual(v.days.map((d) => [d.label, d.totals]), [["Today", "1 closed · 1 created"], [dayLabel("2026-11-05T15:00:00.000Z", NOW), ""]]);
+  assert.equal(new Set(v.days.flatMap((d) => d.items.map((x) => x.id))).size, 4, "each row its own key, for the cursor");
+  const text = (x: { what: [string, unknown][] }) => x.what.map(([t]) => t).join("");
+  const row = (x: (typeof v.days)[number]["items"][number]) => [x.key, x.title, x.mark[0], text(x), x.who, x.when, x.waiting?.map(([t]) => t).join("") ?? null];
+  assert.deepEqual(v.days.map((d) => d.items.map(row)), [
+    [
+      // A day of a creation and a comment says its last step, the comment as one plain line; its mark is the state it is in.
+      ["PLNR-2", "Review the fix", "○", "commented Looks good · 2 steps", `${U.alex.name}, ${U.zoe.name}`, clockTime("2026-11-06T10:00:00.000Z"), null],
+      // An issue's day is the states it went through; it is done, so it waits on nothing.
+      ["PLNR-1", "Fix the greeting", "●", "○ → ◐ → ● · 2 steps", U.bot.name, clockTime("2026-11-06T09:30:00.000Z"), null],
+      // Only the open blocker, with its state; said on the issue's newest row, not again on the day before.
+      ["PLNR-3", "Ship it", "“", "commented on it", U.zoe.name, clockTime("2026-11-06T07:00:00.000Z"), "◌ waiting · needs PLNR-2 ○ Todo"],
+    ],
+    [["PLNR-3", "Ship it", "·", "set the priority to High", U.alex.name, clockTime("2026-11-05T15:00:00.000Z"), null]],
+  ]);
+  const g = paintActivity({ ...v, selected: 1, top: 0, statusLine: { connection: "online", message: [], session: "s", time: "12:00", brief: "" }, keys: [["↵", "open"]] }, { columns: 120, rows: 20 }).grid;
+  const rows = Array.from({ length: g.h }, (_, y) => Array.from({ length: g.w }, (_, x) => g.at(x, y).ch).join(""));
+  assert.match(rows[0]!, /Activity {2}Atlas · every project/);
+  assert.match(rows[2]!, /^ {2}Today {2}1 closed · 1 created {2}─+/);
+  assert.match(rows[4]!, /^▌.*PLNR-1 +Fix the greeting +○ → ◐ → ● · 2 steps +bot/, "the cursor's row, its states and who");
+  assert.ok(rows.some((r) => /waiting · needs PLNR-2 ○ Todo/.test(r)), "the wait under its row");
+  assert.ok(rows.some((r) => /earlier days load at the end/.test(r)), "more before what is loaded");
 });
 
 test("the issue's creation shows only once the first page is in, as on the web", () => {
