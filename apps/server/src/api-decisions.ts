@@ -114,6 +114,13 @@ export function decisionRoutes(app: FastifyInstance): void {
     return reply.code(201).send({ decision: d, runEnded: d.kind === "question" && d.status === "open" });
   });
 
+  // An issue's decisions, every one, newest first: where an agent reads the answer to what it asked (rsva decisions KEY).
+  app.get<{ Params: IssueParams }>("/api/v1/workspaces/:ws/issues/:key/decisions", async (req) => {
+    const found = await issueByKey(req);
+    const rows = (await db.select(decisionColumns).from(decision).where(eq(decision.issueId, found.issue.id)).orderBy(desc(decision.createdAt))) as Decision[];
+    return { decisions: await viewsOf(found.w.workspaceId, rows) };
+  });
+
   // The workspace's decisions, newest first; ?status=open (the default) or answered, or all.
   app.get<{ Params: Ws; Querystring: { status?: string } }>("/api/v1/workspaces/:ws/decisions", async (req) => {
     const w = await workspaceOf(req);

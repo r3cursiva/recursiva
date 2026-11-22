@@ -45,13 +45,14 @@ const GROUP_QUESTION: Record<DecisionKind, (topic: string, n: number) => string>
 };
 
 /**
- * The queue: questions of one kind with the same topic and options make one card (what makes them alike is the agent's
- * topic, never guessed from the words), everything else a card of its own; the cards that unblock most first (ties: the oldest), or the oldest first. `skipped` go last, in the order
+ * The queue: close proposals with the same topic and options make one card (what makes them alike is the agent's topic,
+ * never guessed from the words), everything else a card of its own; the cards that unblock most first (ties: the oldest), or the oldest first. `skipped` go last, in the order
  * they were skipped.
  */
 export function buildQueue(open: readonly Decision[], unblocksOf: (issueId: string) => number, order: Order, skipped: readonly string[] = []): Card[] {
   const groups = new Map<string, Decision[]>();
-  for (const d of open) if (d.topic) groups.set(groupKey(d), [...(groups.get(groupKey(d)) ?? []), d]);
+  // Close proposals only: a hand-off carries its own Done when, read before it is handed over; a question is its agent's.
+  for (const d of open) if (d.topic && d.kind === "close") groups.set(groupKey(d), [...(groups.get(groupKey(d)) ?? []), d]);
   const cards: Card[] = [];
   const grouped = new Set<string>();
   for (const [key, members] of groups) {
@@ -139,7 +140,7 @@ export type Post = (e: Entry) => void;
 export const answerText = (a: Answer): string => ("text" in a ? `“${a.text}”` : a.label);
 
 /** Whether "same next time" can save a rule for the card: one question, with a topic to answer by. */
-export const canRule = (card: Card): boolean => card.members.length === 1 && !!card.members[0]!.topic;
+export const canRule = (card: Card): boolean => card.members.length === 1 && card.kind !== "handoff" && !!card.members[0]!.topic;
 
 /** A rule as one line: the topic and its answer (the screen puts the project before it). */
 export const ruleLine = (topic: string, answer: string): string => `“${topic}” is answered “${answer}”`;

@@ -17,6 +17,7 @@ import type { CommentCreate, Op } from "@rsva/protocol";
 import type { DocNode, NodeName } from "@rsva/editor/doc";
 import { toMarkdown } from "@rsva/editor/markdown";
 import { mayManage, type Capability } from "@rsva/policy";
+import { decisionOpen } from "@rsva/protocol/my-work";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Tx } from "../db.ts";
@@ -25,7 +26,7 @@ import { decisionColumns } from "./columns.ts";
 import { created, lockOwned } from "./rows.ts";
 import { TxError, type Pending } from "./tx-error.ts";
 
-const { decision, decisionRule, document, issue, member, project, run } = schema;
+const { decision, decisionRule, document, issue, member, project, run, workflowState } = schema;
 
 const uuid = z.uuid();
 const target = { id: uuid };
@@ -94,13 +95,14 @@ const answerComment = (words: string, more = ""): string => `**Decision:** ${lin
 /** The issue's project and key, the issue locked: two asks at once take turns, so one open question per issue holds. */
 const issueOf = async (tx: Tx, workspaceId: string, issueId: string) => {
   const [i] = await tx
-    .select({ projectId: issue.projectId, number: issue.number, key: project.key, deletedAt: issue.deletedAt })
+    .select({ projectId: issue.projectId, number: issue.number, key: project.key, deletedAt: issue.deletedAt, archivedAt: issue.archivedAt, group: workflowState.group, projectArchivedAt: project.archivedAt })
     .from(issue)
     .innerJoin(project, eq(project.id, issue.projectId))
+    .innerJoin(workflowState, eq(workflowState.id, issue.stateId))
     .where(and(eq(issue.id, issueId), eq(issue.workspaceId, workspaceId)))
     .for("update", { of: issue });
   if (!i || i.deletedAt) throw new TxError("bad_ref", "issue is not in the workspace, or it is deleted");
-  return { projectId: i.projectId, key: issueKey(i.key, i.number) };
+  return { projectId: i.projectId, key: issueKey(i.key, i.number), open: decisionOpen({ status: "open" }, i, i.group, !!i.projectArchivedAt) };
 };
 
 /**
@@ -112,13 +114,16 @@ const issueOf = async (tx: Tx, workspaceId: string, issueId: string) => {
  */
 export async function createDecision(tx: Tx, workspaceId: string, actorId: string, id: string, set: DecisionCreate, comments: Comments): Promise<Pending[]> {
   const where = await issueOf(tx, workspaceId, set.issueId);
-  const [waiting] = await tx.select({ question: decision.question }).from(decision).where(and(eq(decision.issueId, set.issueId), eq(decision.status, "open")));
-  if (waiting) throw new TxError("conflict", `${where.key} already waits on “${waiting.question}”: one open question per issue`);
+  // Nothing is asked on an issue that waits on nobody (closed, archived): a decision there would hold a slot for nothing.
+  if (!where.open) throw new TxError("invalid", `${where.key} is closed or archived: nothing is asked on it`);
+  const [waiting] = await tx.select({ question: decision.question }).from(decision).where(and(eq(decision.issueId, set.issueId), eq(decision.kind, set.kind), eq(decision.status, "open")));
+  if (waiting) throw new TxError("conflict", `${where.key} already waits on “${waiting.question}”: one open ${set.kind} per issue`);
   const [live] = set.kind === "question" ? await tx.select({ id: run.id }).from(run).where(and(eq(run.issueId, set.issueId), eq(run.agentId, actorId), isNull(run.outcome))).for("update") : [];
   if (set.kind === "question" && !live) throw new TxError("forbidden", `a question is asked by the agent working on ${where.key}: claim it first (rsva run claim ${where.key})`);
   const commentId = crypto.randomUUID();
   const out: Pending[] = [await comments.create(tx, workspaceId, actorId, commentId, { issueId: set.issueId, body: askComment(set) })];
-  const [rule] = set.topic
+  // A hand-off is never answered by a rule: its criteria are the issue's, read before anyone hands it over.
+  const [rule] = set.topic && set.kind !== "handoff"
     ? await tx
         .select({ id: decisionRule.id, answer: decisionRule.answer })
         .from(decisionRule)
@@ -180,6 +185,7 @@ export async function answerDecision(tx: Tx, workspaceId: string, actorId: strin
   const replyId = crypto.randomUUID();
   out.unshift(await comments.create(tx, workspaceId, actorId, replyId, { issueId: row.issueId, ...(row.commentId ? { parentId: row.commentId } : {}), body: answerComment(text, note) }));
   const changed = { status: "answered" as const, answer: text, answerOption: set.option, answeredById: actorId, answeredAt: new Date().toISOString(), answerCommentId: replyId };
+  if (set.rule && row.kind === "handoff") throw new TxError("invalid", "a hand-off is not answered by a rule: each has its own Done when");
   const replacedRule = set.rule && row.topic ? await saveRule(tx, workspaceId, actorId, row, text) : null;
   await tx.update(decision).set({ ...changed, replacedRule }).where(eq(decision.id, id));
   return [...out, { m: "Decision", mid: id, a: "U", d: { issueId: row.issueId, ...changed }, p: { status: row.status } }];

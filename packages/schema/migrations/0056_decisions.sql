@@ -44,5 +44,5 @@ ALTER TABLE "decision_rule" ADD CONSTRAINT "decision_rule_user_id_user_id_fk" FO
 ALTER TABLE "decision_rule" ADD CONSTRAINT "decision_rule_decision_id_decision_id_fk" FOREIGN KEY ("decision_id") REFERENCES "public"."decision"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "decision_issue_id_index" ON "decision" USING btree ("issue_id");--> statement-breakpoint
 CREATE INDEX "decision_workspace_id_index" ON "decision" USING btree ("workspace_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "decision_open_index" ON "decision" USING btree ("issue_id") WHERE "decision"."status" = 'open';--> statement-breakpoint
+CREATE UNIQUE INDEX "decision_open_index" ON "decision" USING btree ("issue_id","kind") WHERE "decision"."status" = 'open';--> statement-breakpoint
 CREATE UNIQUE INDEX "decision_rule_project_id_kind_topic_index" ON "decision_rule" USING btree ("project_id","kind","topic");

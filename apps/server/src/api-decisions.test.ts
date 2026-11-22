@@ -67,9 +67,6 @@ test("the run's holder asks: the row, its mirror comment and the run's end in on
   assert.match(mirror!.body, /^\*\*Question:\*\* Which courier/);
   assert.equal((await runsOf(key))[0]!.outcome, "asked");
 
-  const second = await ask(key, { ...ASK, kind: "close", question: "Close it instead?" });
-  assert.equal(second.status, 409, "one open question per issue");
-  assert.match(((await second.json()) as { message: string }).message, /already waits on “Which courier/);
   const blocked = await claim(key);
   assert.equal(blocked.status, 409, "the issue waits for the answer");
 
@@ -77,6 +74,28 @@ test("the run's holder asks: the row, its mirror comment and the run's end in on
   const reply = (await comments(key)).find((c) => c.parentId === mirror!.id);
   assert.equal(reply?.body, "**Decision:** Speedy");
   assert.equal((await claim(key)).status, 201, "answered: dispatchable again");
+});
+
+test("one open decision of each kind per issue: another agent's close proposal does not block the working agent's question", async () => {
+  const key = await issue("Courier for Albania");
+  const other = await tokenOf((await addMember(f.ws.workspaceId, "member", "agent")).id);
+  assert.equal((await ask(key, { ...ASK, kind: "close", question: "Close it?" }, other)).status, 201);
+  const twice = await ask(key, { ...ASK, kind: "close", question: "Close it, really?" });
+  assert.equal(twice.status, 409, "a second close proposal waits for the first");
+  assert.match(((await twice.json()) as { message: string }).message, /already waits on “Close it\?”/);
+  assert.equal((await claim(key)).status, 201);
+  assert.equal((await ask(key)).status, 201, "the run holder's question is not blocked by the proposal");
+
+  const done = await issue("Courier for Kosovo");
+  assert.equal((await f.owner(f.api(`/issues/${done}`), { method: "PATCH", body: JSON.stringify({ state: "Done" }) })).status, 200);
+  assert.equal((await ask(done, { ...ASK, kind: "close" })).status, 400, "nothing is asked on a closed issue");
+});
+
+test("an issue's decisions by its key, answered ones too: where the agent reads its answer", async () => {
+  const { key, decision } = await asked("Courier for Montenegro");
+  await post(f.owner, `/decisions/${decision.id}/answer`, { option: 2 });
+  const { decisions } = await json<{ decisions: View[] }>(f.agent(f.api(`/issues/${key}/decisions`)));
+  assert.deepEqual(decisions.map((d) => [d.id, d.status, d.answer]), [[decision.id, "answered", "DHL Express"]]);
 });
 
 test("who asks: a question only from the run's holder; a close proposal or hand-off needs no run; read-only asks nothing", async () => {
@@ -189,6 +208,15 @@ test("a hand-over writes the proposed Done when into a description that has none
   assert.match((await json<{ description: string }>(f.owner(f.api(`/issues/${own}`)))).description, /- The PDF opens/);
   assert.doesNotMatch((await json<{ description: string }>(f.owner(f.api(`/issues/${own}`)))).description, /Export CSV/);
   assert.match((await comments(own)).find((c) => c.parentId)!.body, /has its own Done when, so it is kept/);
+});
+
+test("no rule for hand-offs: none is saved from one, and none answers one", async () => {
+  const HAND = { kind: "handoff", question: "Hand it over?", options: ["Hand it over", "Keep it for me"], recommend: 1, criteria: ["It works"], topic: "small fixes" };
+  const first = ((await json<{ decision: View }>(ask(await issue("Small fix one"), HAND))) as { decision: View }).decision;
+  assert.equal((await post(f.owner, `/decisions/${first.id}/answer`, { option: 2, rule: true })).status, 400);
+  await db.insert(schema.decisionRule).values({ workspaceId: f.ws.workspaceId, projectId: (await db.select({ p: schema.issue.projectId }).from(schema.issue).where(eq(schema.issue.id, (await db.select({ i: schema.decision.issueId }).from(schema.decision).where(eq(schema.decision.id, first.id)))[0]!.i)))[0]!.p, kind: "handoff", topic: "small fixes", answer: "Hand it over", userId: f.ws.ownerId });
+  const second = ((await json<{ decision: View }>(ask(await issue("Small fix two"), HAND))) as { decision: View }).decision;
+  assert.equal(second.status, "open", "a hand-off's criteria are read by a person, every time");
 });
 
 test("a hand-over writes the description: a token without the issues grant is refused before anything is written; its other answers go", async () => {

@@ -1,5 +1,5 @@
 {
-  "id": "17d7c42d-4778-46e3-b084-4eaa8af0e9e2",
+  "id": "c3e65b92-61e7-4088-9016-0ad72602ab75",
   "prevId": "24440fc9-90be-41f8-856b-1ae5bb1e109a",
   "version": "7",
   "dialect": "postgresql",
@@ -1143,6 +1143,12 @@
           "columns": [
             {
               "expression": "issue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

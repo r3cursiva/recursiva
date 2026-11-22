@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Decision } from "@rsva/schema/models";
-import { buildQueue, commandOf, evidenceOf, Sitting, UNDO_MS, unblockCounts, type Card, type Entry } from "./decisions.ts";
+import { buildQueue, canRule, commandOf, evidenceOf, Sitting, UNDO_MS, unblockCounts, type Card, type Entry } from "./decisions.ts";
 
 const ask = (n: number, extra: Partial<Decision> = {}): Decision => ({
   id: `c${n}`,
@@ -71,6 +71,14 @@ test("questions of one kind and topic with the same options are one card; a lone
   assert.equal(group.unblocks, 3);
   assert.deepEqual(group.each, [0, 3]);
   assert.equal(q.length, 5, "c3, c4, c5 and the question c6 are cards of their own");
+});
+
+test("hand-offs never group and offer no rule: each one's Done when is read before it is handed over", () => {
+  const hand = (n: number) => ask(n, { kind: "handoff", topic: "small fixes", criteria: [`Fix ${n} works`] });
+  const q = buildQueue([hand(1), hand(2)], none, "oldest");
+  assert.deepEqual(q.map((c) => c.members.length), [1, 1]);
+  assert.equal(canRule(q[0]!), false);
+  assert.equal(canRule(buildQueue([ask(3, { topic: "courier" })], none, "oldest")[0]!), true);
 });
 
 const card = (options = 3, members = 1): Card => buildQueue([ask(1, { options: ask(1).options.slice(0, options) }), ...Array.from({ length: members - 1 }, (_, i) => ask(i + 2))], none, "oldest")[0]!;

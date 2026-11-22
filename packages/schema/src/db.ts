@@ -437,8 +437,9 @@ export const decision = pgTable(
     replacedRule: jsonb().$type<{ answer: string; userId: string; decisionId: string | null; createdAt: string }>(),
     createdAt: ts().notNull().defaultNow(),
   },
-  // One open question per issue: a second one waits for the first to be answered (api-decisions.ts says which).
-  (t) => [index().on(t.issueId), index().on(t.workspaceId), uniqueIndex("decision_open_index").on(t.issueId).where(sql`${t.status} = 'open'`)],
+  // One open decision of each kind per issue: a second one waits for the first to be answered (the refusal names it),
+  // and a close proposal or a hand-off never stands in the way of the working agent's question.
+  (t) => [index().on(t.issueId), index().on(t.workspaceId), uniqueIndex("decision_open_index").on(t.issueId, t.kind).where(sql`${t.status} = 'open'`)],
 );
 
 /**

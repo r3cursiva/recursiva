@@ -688,10 +688,13 @@ const ask: Command = {
 };
 
 const decisions: Command = {
-  args: "",
+  args: "[key]",
   flags: "[--all]",
-  about: "the open questions to people in the workspace, newest first; --all with the answered ones and their answers",
-  run: async (c) => shown(c, await c.api.request<{ decisions: DecisionRow[] }>("GET", "/decisions", { query: { status: c.v.all ? "all" : "open" } }), (d) => d.decisions.map(decisionLines).join("\n") || "no open questions"),
+  about: "the open questions to people in the workspace, newest first; --all with the answered ones and their answers. With an issue's key, every decision on it with its answer: where an agent reads what was decided",
+  run: async (c) =>
+    c.args[0]
+      ? shown(c, await c.api.request<{ decisions: DecisionRow[] }>("GET", issuePath(c, "/decisions")), (d) => d.decisions.map(decisionLines).join("\n") || `no decisions on ${key(c)}`)
+      : shown(c, await c.api.request<{ decisions: DecisionRow[] }>("GET", "/decisions", { query: { status: c.v.all ? "all" : "open" } }), (d) => d.decisions.map(decisionLines).join("\n") || "no open questions"),
 };
 
 const rules: Command = {
