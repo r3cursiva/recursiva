@@ -61,6 +61,8 @@ import type {
   ProjectCreate,
   ProjectPatch,
   Reaction,
+  Decision,
+  DecisionAnswer,
   RelationType,
   StateGroup,
   StatePatch,
@@ -223,6 +225,9 @@ const isRemoval = (op: Op): op is Extract<Op, { op: "delete" }> => op.op === "de
 /** Fields an op sets on an existing row (its optimistic patch). Creates and removals have none. */
 function patchOf(op: Op, at: string): Row | null {
   if (op.op === "update" && op.m === "Attachment" && op.set.url !== undefined) return { ...op.set, kind: readLink(op.set.url).kind };
+  // An answer shows at once; the server adds who answered and the reply's id (write.ts, answerDecision).
+  if (op.op === "update" && op.m === "Decision")
+    return op.set.status === "answered" ? { status: "answered", answerOption: op.set.option, answer: op.set.text ?? null, answeredAt: at } : { status: "open", answerOption: null, answer: null, answeredAt: null };
   if (op.op === "update") return op.m === "Comment" ? { ...op.set, editedAt: at } : op.set;
   if (op.op === "delete" && op.m === "Comment") return { body: "", deletedAt: at };
   if (op.op === "delete" && op.m === "User") return { role: null };
@@ -448,6 +453,9 @@ class Engine implements SyncEngine, FeedHost, LinkHost, TabHost {
   }
   get issues(): ReadonlyMap<string, Issue> {
     return this.pool.maps.Issue;
+  }
+  get decisions(): ReadonlyMap<string, Decision> {
+    return this.pool.maps.Decision;
   }
   projectList(): Project[] {
     return this.orderedProjects.get();
@@ -730,6 +738,10 @@ class Engine implements SyncEngine, FeedHost, LinkHost, TabHost {
     return this.pool.maps.Comment.get(id)!;
   }
 
+  answerDecision(id: string, set: DecisionAnswer): void {
+    if (this.pool.maps.Decision.get(id)) this.enqueue([{ op: "update", m: "Decision", id, set }]);
+  }
+
   editComment(id: string, body: string): void {
     const c = this.pool.maps.Comment.get(id);
     if (c && !c.deletedAt && c.body !== body) this.enqueue([{ op: "update", m: "Comment", id, set: { body } }]);
@@ -931,6 +943,22 @@ class Engine implements SyncEngine, FeedHost, LinkHost, TabHost {
       }
       case "Reaction":
         return { id: op.id, issueId: op.set.issueId, commentId: op.set.commentId ?? null, userId: this.meId, emoji: op.set.emoji, createdAt: at } satisfies Reaction;
+      // Agents ask through the API; a client that sends the op sees its question as the server will write it.
+      case "Decision":
+        return {
+          id: op.id,
+          ...op.set,
+          askedById: this.meId,
+          status: "open",
+          answer: null,
+          answerOption: null,
+          answeredById: null,
+          answeredAt: null,
+          commentId: null,
+          answerCommentId: null,
+          ruleId: null,
+          createdAt: at,
+        } satisfies Decision;
       case "Project":
         return { id: op.id, color: null, formerKeys: [], issueCounter: 0, createdAt: at, archivedAt: null, cycleRollover: false, ...op.set } satisfies Project;
       // The color is the server's (by group); the ledger draws a state by its group.

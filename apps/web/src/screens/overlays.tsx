@@ -73,9 +73,10 @@ export const Overlays = observer(function Overlays() {
         <Toast
           key={notice.n}
           title={created && isPhone() ? "created" : notice.text}
-          duration={notice.undo ? 5000 : notice.code || created ? 3200 : 2500}
+          duration={notice.undoFor?.ms ?? (notice.undo ? 5000 : notice.code || created ? 3200 : 2500)}
           onClose={clearNotice}
-          {...(notice.undo ? { action: { label: "Undo", kbd: keys("mod", "Z"), onClick: undoNotice } } : {})}
+          {...(notice.undo ? { action: { label: "Undo", kbd: notice.undoFor?.kbd ?? keys("mod", "Z"), onClick: undoNotice } } : {})}
+          {...(notice.undoFor ? { lead: notice.undoFor.lead } : {})}
           {...(notice.code ? { code: notice.code } : {})}
           {...(created ? { lead: store.issueKey(created), action: { label: "Open", onClick: () => openCreated(created) } } : {})}
           {...(notice.failed ? { variant: "error" as const, description: notice.failed.detail, field: notice.failed } : {})}

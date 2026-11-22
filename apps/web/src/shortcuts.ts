@@ -112,6 +112,8 @@ function onKey(e: KeyboardEvent): void {
       router.push(paths.inbox(ws));
     } else if (chord === "g" && key === "m") {
       router.push(paths.myWork(ws));
+    } else if (chord === "g" && key === "d") {
+      router.push(paths.decisions(ws));
     } else if (chord === "g" && key === "p") {
       router.push(paths.projects(ws));
     } else if (chord === "g" && key === "v") {

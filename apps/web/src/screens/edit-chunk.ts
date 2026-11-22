@@ -46,6 +46,8 @@ export { NoWorkspace } from "./no-workspace.tsx";
 export { AccountMenu } from "./account-menu.tsx";
 export { ConnectionPanel } from "./connection-panel.tsx";
 export { Inbox } from "./inbox.tsx";
+// The questions agents wait on, one card at a time (RSVA-644).
+export { Decisions } from "./decisions.tsx";
 // The card of an issue key under the pointer (PLNR-43).
 export { IssueRefCard } from "./issue-ref-card.tsx";
 export { MoreMenu } from "./more-menu.tsx";

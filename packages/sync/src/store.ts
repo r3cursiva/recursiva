@@ -5,7 +5,7 @@
 // WebSocket log. Reads never touch the network: they come from the in-memory pool.
 import type { Role } from "@rsva/policy";
 import type { HistoryEntry, HistoryLevel, InboxEvent, InboxKind, InboxMark, ProjectComment, ProjectHistoryEntry, ProjectSettingEntry, PinRef, SavedView, SidebarGroups, ViewFields } from "@rsva/protocol";
-import type { AssignableRole, Attachment, Comment, Cycle, CyclePatch, DocJSON, Document, GithubLink, Issue, IssuePatch, IssueUpdate, Label, LabelPatch, Project, ProjectCreate, ProjectPatch, RelationType, StateGroup, StatePatch, User, WorkflowState, WorkspaceInfo, WorkspacePatch } from "@rsva/schema/models";
+import type { AssignableRole, Attachment, Comment, Cycle, CyclePatch, Decision, DecisionAnswer, DocJSON, Document, GithubLink, Issue, IssuePatch, IssueUpdate, Label, LabelPatch, Project, ProjectCreate, ProjectPatch, RelationType, StateGroup, StatePatch, User, WorkflowState, WorkspaceInfo, WorkspacePatch } from "@rsva/schema/models";
 
 import type { IssueRelations, IssueShelf } from "./pool.ts";
 
@@ -253,6 +253,8 @@ export interface SyncStore {
   readonly labels: ReadonlyMap<string, Label>;
   readonly cycles: ReadonlyMap<string, Cycle>;
   readonly issues: ReadonlyMap<string, Issue>;
+  /** The questions agents put to people (RSVA-644), open and answered. */
+  readonly decisions: ReadonlyMap<string, Decision>;
   readonly inbox: InboxStore;
   readonly views: ViewsStore;
 
@@ -366,6 +368,11 @@ export interface SyncStore {
   projectHistory(projectId: string | null, level: HistoryLevel): ProjectHistoryFeed;
   /** Adds a comment (Markdown) at once and returns it; `parentId` makes it a reply to a top-level comment. */
   addComment(issueId: string, body: string, parentId?: string | null): Comment;
+  /**
+   * A person's answer to an agent's question (RSVA-644), or its undo: the server writes the reply that says it in the
+   * same transaction, and refuses an agent.
+   */
+  answerDecision(id: string, set: DecisionAnswer): void;
   /** Own comments only; the server rejects anyone else's, and the edit reverts. */
   editComment(id: string, body: string): void;
   /** Leaves a tombstone so replies keep their thread. */

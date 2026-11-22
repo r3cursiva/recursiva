@@ -992,7 +992,7 @@ compset() { [[ $1 == -P ]] || return 1; local m=\${(M)PREFIX##$~2}; [[ -n $m ]] 
 probe() { words=("$@"); CURRENT=$#; PREFIX=$words[CURRENT]; IPREFIX=; _rsva; print -r -- "--"; }`;
   const keys = QUERY_WORDS.map((w) => `${w}:`).join(" ");
   const cases: [string[], string][] = [
-    [[""], "describe|issues my show open edit create update move archive delete restore comments comment uncomment link unlink attach detach relate unrelate inbox run runs cycles cycle projects project states state labels label members views workspace tui login logout completion api help"],
+    [[""], "describe|issues my show open edit create update move archive delete restore comments comment uncomment link unlink attach detach relate unrelate inbox run runs ask decisions rules cycles cycle projects project states state labels label members views workspace tui login logout completion api help"],
     [["relate", "CORE-1", ""], "|blockedBy blocks related duplicateOf duplicates"],
     [["issues", "--order", ""], "|updatedAt createdAt priority dueDate startDate manual"],
     [["update", "CORE-1", "--priority", ""], "|urgent high medium low none"],
@@ -1012,7 +1012,7 @@ probe() { words=("$@"); CURRENT=$#; PREFIX=$words[CURRENT]; IPREFIX=; _rsva; pri
     [["state", "create", "Review", "--group", ""], "|backlog unstarted started completed cancelled"],
     [["cycle", "show", "--"], "|--project -p --help -h --plain --color --json"],
     [["inbox", ""], "|read unread archive"],
-    [["help", ""], "|issues my show open edit create update move archive delete restore comments comment uncomment link unlink attach detach relate unrelate inbox run runs cycles cycle projects project states state labels label members views workspace tui login logout completion api help"],
+    [["help", ""], "|issues my show open edit create update move archive delete restore comments comment uncomment link unlink attach detach relate unrelate inbox run runs ask decisions rules cycles cycle projects project states state labels label members views workspace tui login logout completion api help"],
   ];
   const script = [fakes, out, ...cases.map(([w]) => `probe rsva ${w.map(sh).join(" ")}`)].join("\n");
   const zsh = spawnSync("zsh", ["-f"], { input: script });
@@ -1140,4 +1140,22 @@ test("comment --edit and uncomment by handle; attach uploads the bytes under the
   answers = [{ body: { ...described("").body, files: [fileRow] } }, { body: { ok: true } }];
   assert.equal((await cli(["detach", "CORE-1", "notes.md"])).out, "detached notes.md from CORE-1");
   assert.deepEqual(seen.map((s) => `${s.method} ${s.url}`), ["GET /api/v1/workspaces/acme/issues/CORE-1", `DELETE /api/v1/workspaces/acme/issues/CORE-1/files/${fileRow.id}`]);
+});
+
+test("ask: the question, the options with what they mean, the recommendation and its reason; a bad call is not sent", async () => {
+  answers = [{ status: 201, body: { decision: { id: "d1", key: "CORE-7", status: "open", answer: null }, runEnded: true } }];
+  const r = await cli(["ask", "core-7", "--question", "Which courier?", "--option", "Speedy — €6.40", "--option", "DHL", "--recommend", "1", "--why", "cheap", "--topic", "courier", "--evidence", "#77"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /your run ended/);
+  const { method, url, body } = seen.at(-1)!;
+  assert.deepEqual([method, url], ["POST", "/api/v1/workspaces/acme/issues/CORE-7/decisions"]);
+  assert.deepEqual(body, { question: "Which courier?", options: [{ label: "Speedy", detail: "€6.40", why: "cheap" }, { label: "DHL", detail: "", why: "" }], recommend: 1, evidence: ["#77"], topic: "courier" });
+  seen.length = 0;
+  for (const argv of [
+    ["ask", "CORE-7", "--option", "A", "--option", "B", "--recommend", "1"],
+    ["ask", "CORE-7", "--question", "Q", "--option", "A", "--recommend", "1"],
+    ["ask", "CORE-7", "--question", "Q", "--option", "A", "--option", "B", "--recommend", "3"],
+  ])
+    assert.notEqual((await cli(argv)).code, 0, argv.join(" "));
+  assert.equal(seen.length, 0);
 });

@@ -5,6 +5,8 @@ import type {
   AttachmentPatch,
   CycleCreate,
   CyclePatch,
+  DecisionAnswer,
+  DecisionCreate,
   DocJSON,
   Equal,
   IssueModelName,
@@ -61,8 +63,9 @@ export * from "./views.ts";
  * 16: Issue `formerKeys` and moves between projects (PLNR-448): an older client would neither find a moved issue by its
  *     old key nor send the move, and its saved copy would drop the keys.
  * 17: the workspace's `triagers` (who triages): a local copy without them would take every owner and admin for one.
+ * 18: the Decision model (RSVA-644): a local copy without it would never learn the questions that wait on its person.
  */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 
 /**
  * WebSocket close codes: the session ended (sign in again), the viewer may not open the workspace, or there is no such
@@ -173,6 +176,13 @@ export type Op =
   | { op: "create"; m: "Attachment"; id: string; set: AttachmentCreate }
   | { op: "update"; m: "Attachment"; id: string; set: AttachmentPatch }
   | { op: "delete"; m: "Attachment"; id: string }
+  /**
+   * A question to a person (RSVA-644): written with a comment that mirrors it, and answered at once when a rule of the
+   * project covers its topic. Its answer, by a person only, is written with the reply that says it; `status: "open"`
+   * takes the answer back within the undo window.
+   */
+  | { op: "create"; m: "Decision"; id: string; set: DecisionCreate }
+  | { op: "update"; m: "Decision"; id: string; set: DecisionAnswer }
   /**
    * The whole description; `id` is the issue's. `base` is the transaction that made the text this one was edited from
    * (null: no save yet): another text in between is merged with this one (ADR 0057), or, when the base's text is no longer

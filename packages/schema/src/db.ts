@@ -21,7 +21,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
-import type { RunOutcome, RunStage, TileColor } from "./models.ts";
+import type { CloseAs, DecisionKind, DecisionOption, DecisionStatus, RunOutcome, RunStage, TileColor } from "./models.ts";
 
 const id = () => uuid().primaryKey().default(sql`uuidv7()`);
 const ts = () => timestamp({ withTimezone: true, mode: "string" });
@@ -393,6 +393,80 @@ export const run = pgTable(
     // The live runs of a workspace, for `is:ready`.
     index("run_workspace_live_index").on(t.workspaceId).where(sql`${t.outcome} is null`),
   ],
+);
+
+/**
+ * A question an agent puts to a person on an issue (RSVA-644): `rsva ask`, answered on the Decisions screen. The row is
+ * what the screen and the agent read; a comment on the issue mirrors it for people reading the thread (`commentId`), and
+ * the answer is a reply to that comment (`answerCommentId`), written in the same transaction. Synced like attachments.
+ * What it unblocks and how old it is are read from the issue's relations and `createdAt`, never given by the agent.
+ */
+export const decision = pgTable(
+  "decision",
+  {
+    ...onIssue(),
+    kind: text().$type<DecisionKind>().notNull(),
+    question: text().notNull(),
+    /** 2 to 4, each with what choosing it means (`detail`) and why one would (`why`; the recommended one's is the card's reason). */
+    options: jsonb().$type<DecisionOption[]>().notNull(),
+    /** 0-based index into `options`. */
+    recommended: smallint().notNull(),
+    /** One line each, as the agent wrote it: a path, an issue's key, a pull request's #number, a fact. */
+    evidence: jsonb().$type<string[]>().notNull(),
+    /** Where a close proposal's close takes the issue: the project's state for done or for canceled. Null for other kinds. */
+    closeAs: text().$type<CloseAs>(),
+    /**
+     * Server-only, never synced: the issue's state before an answer closed it, so taking the answer back puts it back.
+     */
+    undoStateId: uuid(),
+    /** A hand-off's "Done when", as the agent proposes it: written into the issue's description when it is handed over. */
+    criteria: jsonb().$type<string[]>().notNull().default([]),
+    /** What the question is about, the same words each time it comes back: a rule answers a topic of a project. */
+    topic: text(),
+    askedById: uuid().notNull().references(() => user.id),
+    status: text().$type<DecisionStatus>().notNull().default("open"),
+    /** The answer's words: the option's label, or the person's own. */
+    answer: text(),
+    /** 0-based; null for an answer in one's own words. */
+    answerOption: smallint(),
+    answeredById: uuid().references(() => user.id),
+    answeredAt: ts(),
+    /** The comment that mirrors the question, and the reply that answered it. */
+    commentId: uuid(),
+    answerCommentId: uuid(),
+    /** The rule that answered it as it was asked, when one did (then nobody answered it: `answeredById` is null). */
+    ruleId: uuid(),
+    /**
+     * Server-only, never synced: the rule an answer with "same next time" replaced, as it was, so taking the answer back
+     * puts it back. Null when the answer made a new rule or none.
+     */
+    replacedRule: jsonb().$type<{ answer: string; userId: string; decisionId: string | null; createdAt: string }>(),
+    createdAt: ts().notNull().defaultNow(),
+  },
+  // One open decision of each kind per issue: a second one waits for the first to be answered (the refusal names it),
+  // and a close proposal or a hand-off never stands in the way of the working agent's question.
+  (t) => [index().on(t.issueId), index().on(t.workspaceId), uniqueIndex("decision_open_index").on(t.issueId, t.kind).where(sql`${t.status} = 'open'`)],
+);
+
+/**
+ * "Answer the same way next time" (RSVA-644): a topic of a project and the answer a person gave it. Server-only,
+ * outside the log. `rsva ask` with the same topic in the same project is answered by it at once; `rsva rules` lists
+ * them for agents to read before asking. Exact topics only: no matching of similar words.
+ */
+export const decisionRule = pgTable(
+  "decision_rule",
+  {
+    ...inProject(),
+    /** A rule answers questions of its kind only: a close proposal's answer is no answer to a question. */
+    kind: text().$type<DecisionKind>().notNull(),
+    topic: text().notNull(),
+    answer: text().notNull(),
+    /** Who saved it, and the decision it was saved from. */
+    userId: uuid().notNull().references(() => user.id),
+    decisionId: uuid().references(() => decision.id),
+    createdAt: ts().notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex().on(t.projectId, t.kind, t.topic)],
 );
 
 /**

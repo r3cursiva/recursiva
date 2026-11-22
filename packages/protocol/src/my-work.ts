@@ -115,6 +115,29 @@ export function waitsOnReview(s: ReviewSource & Pick<WorkSource, "me" | "role" |
   return reviewWaits(s, me, canTriage(s), issue);
 }
 
+/**
+ * Whether a decision still waits for an answer at all (RSVA-644): open, on a live issue that is not closed, in a project
+ * that is not archived. One rule for the screen, the sidebar's count, `GET /decisions` and the claim a question blocks.
+ */
+export const decisionOpen = (d: { status: string }, issue: Pick<Issue, "archivedAt" | "deletedAt">, group: string | null | undefined, projectArchived: boolean): boolean =>
+  d.status === "open" && isLiveIssue(issue) && group !== "completed" && group !== "cancelled" && !projectArchived;
+
+/**
+ * Whether an open decision (an agent's question, RSVA-644) waits on the viewer: its issue is live and open in a live
+ * project, and the viewer is assigned to it or reviews it as a review would be theirs (its creator; whoever triages,
+ * for an issue an agent created). The sidebar's count and the Decisions screen read this one rule.
+ */
+export function decisionWaits(
+  s: Pick<WorkSource, "me" | "role" | "workspace" | "projects" | "states" | "users">,
+  d: { status: string },
+  issue: Issue | undefined,
+): boolean {
+  const me = s.me?.id;
+  if (!me || !issue || !decisionOpen(d, issue, s.states.get(issue.stateId)?.group, !!s.projects.get(issue.projectId)?.archivedAt)) return false;
+  const byAgent = !!issue.createdById && s.users.get(issue.createdById)?.kind === "agent";
+  return issue.assigneeIds.includes(me) || isReviewer(me, canTriage(s), issue.createdById, byAgent);
+}
+
 /** An agent that has not touched its issue for this long is idle. */
 const IDLE_MS = 48 * 3_600_000;
 const WEEK_MS = 7 * 86_400_000;

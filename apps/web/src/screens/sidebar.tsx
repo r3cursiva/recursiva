@@ -5,6 +5,7 @@ import {
   ListChecksIcon,
   MagnifyingGlassIcon,
   SidebarSimpleIcon,
+  SignpostIcon,
   StackIcon,
   FunnelSimpleIcon,
   TrayIcon,
@@ -18,6 +19,7 @@ import { observer } from "mobx-react-lite";
 import { localToday } from "@rsva/query";
 import { formatDate } from "@rsva/display/time";
 import { cycleShort, daysLeft } from "../lib/cycles.ts";
+import { waitingDecisions } from "./decisions-state.ts";
 import { pinTargets, routePin, type PinTarget } from "../lib/pins.ts";
 import { viewCount } from "../lib/views.ts";
 import { paths, router } from "../router.ts";
@@ -55,6 +57,7 @@ export const Sidebar = observer(function Sidebar({ ws, activeKey }: { ws: string
         <InboxItem ws={ws} />
         <MyWorkItem ws={ws} />
         {canTriage(store) && <TriageItem ws={ws} />}
+        <DecisionsItem ws={ws} />
         <ViewsItem ws={ws} />
         <button type="button" data-roving-item aria-label="Search" onClick={() => palette.show()} className={cn(navItem, "text-left")}>
           <MagnifyingGlassIcon className="size-4 shrink-0 strip:size-[18px]" />
@@ -160,6 +163,25 @@ const TriageItem = observer(function TriageItem({ ws }: { ws: string }) {
       <span className={itemLabel}>Triage</span>
       <NavCount n={n} />
       <Tip>Triage</Tip>
+    </Link>
+  );
+});
+
+/** Decisions (RSVA-644): the questions agents wait on the viewer to answer, counted from the workspace's own copy. */
+const DecisionsItem = observer(function DecisionsItem({ ws }: { ws: string }) {
+  const n = waitingDecisions.get().length;
+  return (
+    <Link
+      href={paths.decisions(ws)}
+      aria-current={router.route.name === "decisions" ? "page" : undefined}
+      aria-label={n ? `Decisions, ${n} waiting` : "Decisions"}
+      data-roving-item
+      className={navItem}
+    >
+      <SignpostIcon className="size-4 shrink-0 strip:size-[18px]" />
+      <span className={itemLabel}>Decisions</span>
+      <NavCount n={n} />
+      <Tip kbd="G D">Decisions</Tip>
     </Link>
   );
 });

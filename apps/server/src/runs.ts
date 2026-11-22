@@ -38,10 +38,13 @@ export interface RunFacts {
 
 const failed = (r: RunFacts) => r.outcome === "failed" || r.outcome === "expired";
 
-/** The runs that count as attempts now: those after the last stopped one, made in the last ATTEMPT_WINDOW_MS. */
+/**
+ * The runs that count as attempts now: those after the last stopped one, made in the last ATTEMPT_WINDOW_MS. A run that
+ * asked a person (RSVA-644) is none: it neither numbers the next attempt nor counts toward a stop.
+ */
 export function attemptsOf<R extends RunFacts>(runs: readonly R[], now = Date.now()): R[] {
   const last = runs.findLastIndex((r) => r.outcome === "stopped");
-  return runs.slice(last + 1).filter((r) => now - Date.parse(r.createdAt) < ATTEMPT_WINDOW_MS);
+  return runs.slice(last + 1).filter((r) => r.outcome !== "asked" && now - Date.parse(r.createdAt) < ATTEMPT_WINDOW_MS);
 }
 
 /**

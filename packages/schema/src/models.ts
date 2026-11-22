@@ -1,7 +1,7 @@
 // Model rows as the client sees them: types and small constants. drizzle is imported for types only,
 // so the browser gets a handful of bytes from this module.
 import type { Role } from "@rsva/policy";
-import type { attachment, comment, cycle, document, issue, label, member, project, reaction, user, workflowState, workspace } from "./db.ts";
+import type { attachment, comment, cycle, decision, document, issue, label, member, project, reaction, user, workflowState, workspace } from "./db.ts";
 
 export type { CycleSummary, DocJSON } from "./db.ts";
 
@@ -31,6 +31,8 @@ export type Issue = Row<typeof issue>;
 export type Comment = Row<typeof comment>;
 export type Reaction = Row<typeof reaction>;
 export type Attachment = Row<typeof attachment>;
+/** A question an agent asked a person (RSVA-644); see `decision` in db.ts. */
+export type Decision = Omit<Row<typeof decision>, "replacedRule" | "undoStateId">;
 /**
  * An issue's description; `id` is the issue's id. `tx`: the transaction that wrote this text (null: none yet); missing in
  * a copy kept before it existed.
@@ -46,6 +48,7 @@ export interface Models {
   Cycle: Cycle;
   Issue: Issue;
   Attachment: Attachment;
+  Decision: Decision;
 }
 
 export type ModelName = keyof Models;
@@ -480,9 +483,47 @@ export type RunStage = (typeof RUN_STAGES)[number];
 /**
  * How a run ended: `expired` its lease passed before it ended, `blocked` it failed on its environment (no push access,
  * the network, a missing tool, the dispatch's own setup) rather than on the work, `stopped` it ended the loop
- * (apps/server/src/runs.ts).
+ * (apps/server/src/runs.ts), `asked` it put a question to a person (`rsva ask`, RSVA-644) and waits for the answer: not
+ * an attempt, failed or otherwise.
  */
-export type RunOutcome = "done" | "failed" | "blocked" | "expired" | "stopped";
+export type RunOutcome = "done" | "failed" | "blocked" | "expired" | "stopped" | "asked";
+
+// ── Decisions (RSVA-644): what an agent asks a person, and the answer ─────────────────────────────────────────────
+
+/** A question; whether to close the issue (a triage proposal); whether to hand the issue to an agent. */
+export const DECISION_KINDS = ["question", "close", "handoff"] as const;
+export type DecisionKind = (typeof DECISION_KINDS)[number];
+/** Open until a person answers; an answer taken back within the undo window opens it again. */
+export type DecisionStatus = "open" | "answered";
+export interface DecisionOption {
+  label: string;
+  /** What choosing it means; empty when nothing more needs saying. */
+  detail: string;
+  /** Why one would choose it; the recommended option's is the card's reason. */
+  why: string;
+}
+export const DECISION_OPTIONS_MIN = 2;
+export const DECISION_OPTIONS_MAX = 4;
+export const DECISION_EVIDENCE_MAX = 10;
+/** The longest question, option label, detail, reason, evidence line and topic kept. */
+export const DECISION_TEXT_MAX = 500;
+/** How long an answer can be taken back on the server (the screen holds its own answers this long before sending). */
+export const DECISION_UNDO_MS = 8000;
+/** What an agent sends to ask; the server sets who asked, the status and the time. */
+export type DecisionCreate = Pick<Decision, "issueId" | "kind" | "question" | "options" | "recommended" | "evidence" | "topic" | "criteria" | "closeAs">;
+/** Where a close proposal takes the issue: the project's state of the completed group, or of the cancelled one. */
+export const CLOSE_AS = ["done", "canceled"] as const;
+export type CloseAs = (typeof CLOSE_AS)[number];
+/** A close proposal's first option is the close itself: answering it moves the issue. */
+export const CLOSE_OPTION = 0;
+/** A hand-off's first option is the hand-off itself: answering it writes the criteria into the issue's description. */
+export const HANDOFF_OPTION = 0;
+export const DECISION_CRITERIA_MAX = 20;
+/**
+ * A person's answer: an option by index, or their own words (`text`); `rule` saves it for the topic. `status: "open"`
+ * takes the answer back, within DECISION_UNDO_MS and by the person who gave it.
+ */
+export type DecisionAnswer = { status: "answered"; option: number | null; text?: string; rule?: boolean } | { status: "open" };
 
 /** A UUID (any version) as Postgres writes it, lower case, for a larger pattern: a mention, a pin, a Telegram button. */
 export const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";

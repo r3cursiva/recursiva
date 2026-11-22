@@ -33,6 +33,7 @@ export const SECTIONS: { title: string; note?: string; rows: Row[] }[] = [
     rows: [
       ["Inbox", chord("G", "N")],
       ["My work", chord("G", "M")],
+      ["Decisions", chord("G", "D")],
       ["Project home", chord("G", "O")],
       ["Issues", chord("G", "I")],
       ["Cycles", chord("G", "C")],
@@ -108,6 +109,19 @@ export const SECTIONS: { title: string; note?: string; rows: Row[] }[] = [
       ["Reply to a mention", "R"],
       ["Start an issue", "S"],
       ["A new assignment: Todo, Later, unassign", "T", "L", "U"],
+    ],
+  },
+  {
+    title: "Decisions",
+    rows: [
+      ["Answer with an option", "1 – 4"],
+      ["Take the recommendation", "↵"],
+      ["Skip, open the issue", "S", "O"],
+      ["Answer in your own words", "R"],
+      ["Answer the same way next time", "A"],
+      ["Undo the last answer", "Z"],
+      ["Another card; in a group, another issue", "J", "K"],
+      ["Leave an issue of a group out", "X"],
     ],
   },
   {

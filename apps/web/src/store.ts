@@ -195,6 +195,7 @@ class Facade implements SyncStore {
   get labels() { return current.labels; }
   get cycles() { return current.cycles; }
   get issues() { return current.issues; }
+  get decisions() { return current.decisions; }
   get inbox() { return current.inbox; }
   get views() { return current.views; }
   // Any open engine's: one sending a queue in the background has nobody else to tell.
@@ -242,6 +243,7 @@ class Facade implements SyncStore {
   feed: SyncStore["feed"] = (issueId) => current.feed(issueId);
   projectHistory: SyncStore["projectHistory"] = (projectId, level) => current.projectHistory(projectId, level);
   addComment: SyncStore["addComment"] = (issueId, body, parentId) => current.addComment(issueId, body, parentId);
+  answerDecision: SyncStore["answerDecision"] = (id, set) => current.answerDecision(id, set);
   editComment: SyncStore["editComment"] = (id, body) => current.editComment(id, body);
   deleteComment: SyncStore["deleteComment"] = (id) => current.deleteComment(id);
   toggleReaction: SyncStore["toggleReaction"] = (issueId, commentId, emoji) => current.toggleReaction(issueId, commentId, emoji);

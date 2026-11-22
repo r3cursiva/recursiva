@@ -154,6 +154,8 @@ const OP_CAPABILITY: Record<string, Capability> = {
   Attachment: "issues.write",
   Comment: "comments.write",
   Reaction: "comments.write",
+  /** Asking and answering are both written as comments; who may answer (people only) is the write pipeline's rule. */
+  Decision: "comments.write",
   Cycle: "cycles.write",
   Workspace: "workspace.write",
   Project: "projects.write",

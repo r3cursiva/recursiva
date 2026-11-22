@@ -8,7 +8,7 @@
 // Every U action also stores what its fields held before (`sync_action.prev`): the row is read for update anyway, so
 // the issue history gets "from → to" for free instead of walking the log backwards (docs/research/comments-history-2026-10-27.md).
 import { randomUUID } from "node:crypto";
-import { deniedGuardedChange, deniedState, deniedStateUpdate, isProposalLabel, isRole, mayDeleteIssue, mayManage, PEOPLE_LABELS, PEOPLE_STATES, readsAs, type GuardActor, type Guarded } from "@rsva/policy";
+import { deniedGuardedChange, deniedState, deniedStateUpdate, isProposalLabel, isRole, mayDeleteIssue, mayManage, PEOPLE_LABELS, PEOPLE_STATES, readsAs, type GuardActor, type Guarded, type Capability } from "@rsva/policy";
 import { ISSUE_LISTS, type Action, type CommentCreate, type ListBase, type Op, type ReactionCreate, type Via } from "@rsva/protocol";
 import { emptyDoc, MENTION_SCHEME, mentionIds, sameDoc, type DocNode } from "@rsva/editor/doc";
 import { mergeDocs } from "@rsva/editor/merge";
@@ -25,6 +25,7 @@ import { broadcast, prime } from "./hub.ts";
 import { memberOpSchemas, setMemberRole } from "./members.ts";
 import { membershipChanged } from "./membership.ts";
 import { checkIssueCycle, createCycle, cycleOpSchemas, deleteCycle, updateCycle } from "./cycles.ts";
+import { answerDecision, createDecision, decisionOpSchemas, type Comments } from "./decisions.ts";
 import { purgeIssueAs } from "./purge.ts";
 import { checkProjects, createLabel, createProject, createState, deleteLabel, deleteState, settingsOpSchemas, updateLabel, updateProject, updateState, updateWorkspace, type Touched } from "./settings.ts";
 import { forgetText, readTx } from "./log.ts";
@@ -34,7 +35,7 @@ import { created, diff, lockOwned, lockWorkspace } from "./rows.ts";
 import { notifyChanged } from "../notify/run.ts";
 import { TxError, type Pending } from "./tx-error.ts";
 
-const { workspace, member, user, project, workflowState, label, issue, document, documentVersion, comment, reaction, attachment, blob, syncAction, appliedTx, NO_SAVE_TX } = schema;
+const { workspace, member, user, project, workflowState, label, issue, document, documentVersion, comment, reaction, attachment, blob, decision, syncAction, appliedTx, NO_SAVE_TX } = schema;
 
 const uuid = z.uuid();
 const day = z.iso.date();
@@ -135,6 +136,7 @@ const opSchema = z.discriminatedUnion("m", [
   z.discriminatedUnion("op", [z.object({ op: z.literal("update"), m: z.literal("Document"), ...target, set: z.object({ doc: z.looseObject({ type: z.literal("doc") }) }).strict(), base: uuid.nullable().optional() }).strict()]),
   ...settingsOpSchemas,
   ...cycleOpSchemas,
+  ...decisionOpSchemas,
   ...memberOpSchemas,
 ]);
 /** Each op's own fields and those of its `set`, by model and kind; `set` may be a union (a link or a file). */
@@ -164,7 +166,12 @@ export interface TxResult {
  * forgets it gets the narrower rules, never an admin's. `via`: the change was made in the Telegram bot's chat or by an email
  * reply (PLNR-369); the log and a new comment keep it, the history shows it.
  */
-export async function applyTx(workspaceId: string, actorId: string, txId: string, rawOps: unknown, signedIn = false, via?: Via): Promise<TxResult> {
+/**
+ * `may`: whether the actor holds a capability, for an op whose need depends on the row it changes (a decision's
+ * hand-over writes the description: issues.write besides the comments' grant deniedOps checked). submitTx passes the
+ * viewer's; the server's own callers act with every right.
+ */
+export async function applyTx(workspaceId: string, actorId: string, txId: string, rawOps: unknown, signedIn = false, via?: Via, may: (cap: Capability) => boolean = () => true): Promise<TxResult> {
   const parsed = opsSchema.safeParse(rawOps);
   if (!parsed.success) throw new TxError("invalid", z.prettifyError(parsed.error));
   if (!uuid.safeParse(txId).success) throw new TxError("invalid", "transaction id must be a UUID");
@@ -175,7 +182,7 @@ export async function applyTx(workspaceId: string, actorId: string, txId: string
     const pending: Pending[] = [];
     const touched: Touched = new Set();
     for (const op of ops) {
-      const a = await applyOp(tx, workspaceId, actorId, txId, who, touched, op, via);
+      const a = await applyOp(tx, workspaceId, actorId, txId, who, touched, op, via, may);
       if (Array.isArray(a)) pending.push(...a);
       else if (a) pending.push(a);
     }
@@ -332,6 +339,7 @@ interface OpContext {
   agent: boolean;
   touched: Touched;
   via: Via | undefined;
+  may: (cap: Capability) => boolean;
 }
 
 /**
@@ -350,6 +358,8 @@ const HANDLERS: { [O in Op as `${O["op"]}:${O["m"]}`]: (c: OpContext, op: O) => 
   "create:Attachment": (c, o) => (isFileCreate(o.set) ? addFile(c.tx, c.workspaceId, c.actorId, o.id, o.set) : addLink(c.tx, c.workspaceId, c.actorId, o.id, o.set)),
   "update:Attachment": (c, o) => editLink(c.tx, c.workspaceId, o.id, o.set),
   "delete:Attachment": (c, o) => removeLink(c.tx, c.workspaceId, o.id),
+  "create:Decision": (c, o) => createDecision(c.tx, c.workspaceId, c.actorId, o.id, o.set, comments(c.via)),
+  "update:Decision": (c, o) => answerDecision(c.tx, c.workspaceId, c.actorId, c.txId, c.agent, c.may, o.id, o.set, comments(c.via)),
   "update:Document": (c, o) => updateDocument(c.tx, c.workspaceId, c.txId, o),
   "update:Workspace": (c, o) => updateWorkspace(c.tx, c.workspaceId, o.id, o.set),
   "create:Project": (c, o) => createProject(c.tx, c.workspaceId, c.touched, o.id, o.set),
@@ -367,13 +377,21 @@ const HANDLERS: { [O in Op as `${O["op"]}:${O["m"]}`]: (c: OpContext, op: O) => 
   "delete:User": (c, o) => setMemberRole(c.tx, c.workspaceId, c.actorId, o.id, null),
 };
 
-async function applyOp(tx: Tx, workspaceId: string, actorId: string, txId: string, who: GuardActor, touched: Touched, op: Op, via?: Via): Promise<Pending | Pending[] | null> {
+/** The comments a decision writes with itself, through the handlers every comment goes through. */
+const comments = (via?: Via): Comments => ({
+  create: (tx, workspaceId, actorId, id, set) => createComment(tx, workspaceId, actorId, id, set, via),
+  remove: (tx, workspaceId, id) => tombstone(tx, workspaceId, id),
+  describe: updateDocument,
+  update: (tx, workspaceId, actorId, id, set) => updateIssue(tx, workspaceId, actorId, false, id, set),
+});
+
+async function applyOp(tx: Tx, workspaceId: string, actorId: string, txId: string, who: GuardActor, touched: Touched, op: Op, via: Via | undefined, may: (cap: Capability) => boolean): Promise<Pending | Pending[] | null> {
   if (op.m === "WorkflowState" || op.m === "Label") op = await guardOp(tx, workspaceId, who, op);
   const key = `${op.op}:${op.m}`;
   // Validated ops always have a handler; the check keeps a prototype key from ever being called.
   if (!Object.hasOwn(HANDLERS, key)) throw new TxError("invalid", `unknown op ${op.op} ${op.m}`);
   const handle = HANDLERS[key as keyof typeof HANDLERS] as (c: OpContext, op: Op) => Promise<Pending | Pending[] | null>;
-  return handle({ tx, workspaceId, actorId, txId, agent: who === "agent", touched, via }, op);
+  return handle({ tx, workspaceId, actorId, txId, agent: who === "agent", touched, via, may }, op);
 }
 
 // ── Process rules ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -395,7 +413,8 @@ const movesProject = (op: Op) => op.m === "Issue" && op.op === "update" && op.se
 
 /** Who the process rules hold the actor to; read only when an op is one they look at (else "admin": nothing to hold). */
 async function guardActor(tx: Tx, workspaceId: string, actorId: string, ops: Op[], signedIn: boolean): Promise<GuardActor> {
-  if (!ops.some((op) => op.m === "WorkflowState" || op.m === "Label" || movesState(op) || movesProject(op))) return "admin";
+  // An answer to a decision is a person's: the actor's kind is read for it too (decisions.ts).
+  if (!ops.some((op) => op.m === "WorkflowState" || op.m === "Label" || movesState(op) || movesProject(op) || (op.m === "Decision" && op.op === "update"))) return "admin";
   const [u] = await tx
     .select({ kind: user.kind, role: member.role })
     .from(user)
@@ -885,6 +904,9 @@ async function ownComment(tx: Tx, workspaceId: string, actorId: string, id: stri
   const c = await liveComment(tx, workspaceId, id, true);
   if (!c) throw new TxError("not_found", `no comment ${id}`);
   if (c.authorId !== actorId) throw new TxError("forbidden", "only the author can change a comment");
+  // A decision's question and its answer stay as written (RSVA-644): the asking agent could otherwise rewrite either.
+  const [d] = await tx.select({ id: decision.id }).from(decision).where(and(eq(decision.workspaceId, workspaceId), or(eq(decision.commentId, id), eq(decision.answerCommentId, id)))).limit(1);
+  if (d) throw new TxError("forbidden", "a decision's question and answer stay as written: answer or ask again instead");
   return c;
 }
 
@@ -906,7 +928,13 @@ export async function writeCommentBody(tx: Tx, workspaceId: string, c: { id: str
 /** A tombstone, not a removal: replies keep their thread. The text is gone from the row and from the log. */
 async function deleteComment(tx: Tx, workspaceId: string, actorId: string, id: string): Promise<Pending | null> {
   const c = await ownComment(tx, workspaceId, actorId, id);
-  if (c.deletedAt) return null;
+  return c.deletedAt ? null : tombstone(tx, workspaceId, id);
+}
+
+/** The comment's text goes and a tombstone stays, so its replies keep their thread; whose it is was checked by the caller. */
+async function tombstone(tx: Tx, workspaceId: string, id: string): Promise<Pending | null> {
+  const c = await liveComment(tx, workspaceId, id, true);
+  if (!c || c.deletedAt) return null;
   const [row] = await tx.update(comment).set({ body: "", deletedAt: dsql`now()` }).where(eq(comment.id, id)).returning({ deletedAt: comment.deletedAt });
   await scrubCommentText(tx, workspaceId, id);
   return { m: "Comment", mid: id, a: "U", d: { issueId: c.issueId, body: "", deletedAt: row!.deletedAt } };
