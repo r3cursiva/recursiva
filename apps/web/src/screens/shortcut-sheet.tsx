@@ -64,10 +64,10 @@ const SECTIONS: { title: string; note?: string; rows: Row[] }[] = [
       ["Move", "J", "K", keys("↑", "↓")],
       ["Board: another column", keys("←", "→")],
       ["Mark for a bulk action", "X"],
-      ["Mark while moving", keys("shift", "J"), keys("shift", "K")],
+      ["Mark while moving", keys("shift", "J"), keys("shift", "K"), keys("shift", "↑"), keys("shift", "↓")],
       ["Mark all", keys("mod", "A")],
       ["List or board", "V"],
-      ["Filters", "F"],
+      ["The View panel: filters and display", "F", "E"],
       ["Display", keys("shift", "V")],
       ["Filter with a query", "/"],
       ["View tabs", "1 – 9"],
@@ -130,7 +130,7 @@ const SECTIONS: { title: string; note?: string; rows: Row[] }[] = [
   {
     title: "History",
     rows: [
-      ["Level", "1 – 4", "−", "="],
+      ["Level", "1 – 4", "-", "="],
       ["Agents, people, everyone", "A", "P", "0"],
     ],
   },
