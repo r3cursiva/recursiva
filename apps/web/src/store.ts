@@ -242,6 +242,7 @@ class Facade implements SyncStore {
   feed: SyncStore["feed"] = (issueId) => current.feed(issueId);
   projectHistory: SyncStore["projectHistory"] = (projectId, level) => current.projectHistory(projectId, level);
   addComment: SyncStore["addComment"] = (issueId, body, parentId) => current.addComment(issueId, body, parentId);
+  answerDecision: SyncStore["answerDecision"] = (id, set) => current.answerDecision(id, set);
   editComment: SyncStore["editComment"] = (id, body) => current.editComment(id, body);
   deleteComment: SyncStore["deleteComment"] = (id) => current.deleteComment(id);
   toggleReaction: SyncStore["toggleReaction"] = (issueId, commentId, emoji) => current.toggleReaction(issueId, commentId, emoji);

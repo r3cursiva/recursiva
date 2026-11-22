@@ -20,14 +20,14 @@
 // locked and read again in the transaction).
 import { mayDeleteIssue } from "@rsva/policy";
 import { APP_BOT, TRASH_DAYS } from "@rsva/schema/models";
-import { and, arrayContains, asc, eq, lt, or, sql as dsql } from "drizzle-orm";
+import { and, arrayContains, asc, eq, inArray, lt, or, sql as dsql } from "drizzle-orm";
 import { db, schema, type Tx } from "../db.ts";
 import { asBot } from "./bots.ts";
 import { TxError, type Pending } from "./tx-error.ts";
 import { forgetText } from "./log.ts";
 import { roleOf, updateIssue } from "./write.ts";
 
-const { issue, comment, reaction, attachment, githubLink, inboxMark, notifyOutbox, run, document, user, syncAction } = schema;
+const { issue, comment, reaction, attachment, githubLink, inboxMark, notifyOutbox, run, decision, decisionRule, document, user, syncAction } = schema;
 
 /** A person's Delete permanently: an issue in the trash, by its creator or an admin, never by an agent. */
 export async function purgeIssueAs(tx: Tx, workspaceId: string, actorId: string, id: string): Promise<Pending[]> {
@@ -114,13 +114,16 @@ async function purge(tx: Tx, workspaceId: string, actorId: string, row: { id: st
       union all select 'Comment', ${comment.id} from ${comment} where ${comment.issueId} = ${id}
       union all select 'Attachment', ${attachment.id} from ${attachment} where ${attachment.issueId} = ${id}
       union all select 'GithubLink', ${githubLink.id} from ${githubLink} where ${githubLink.issueId} = ${id}
+      union all select 'Decision', ${decision.id} from ${decision} where ${decision.issueId} = ${id}
       union all select ${syncAction.model}, ${syncAction.modelId} from ${syncAction}
-        where ${syncAction.workspaceId} = ${workspaceId} and ${syncAction.model} in ('Attachment', 'GithubLink') and ${syncAction.action} = 'I' and ${syncAction.data} ->> 'issueId' = ${id}`,
+        where ${syncAction.workspaceId} = ${workspaceId} and ${syncAction.model} in ('Attachment', 'GithubLink', 'Decision') and ${syncAction.action} = 'I' and ${syncAction.data} ->> 'issueId' = ${id}`,
   );
   // Reactions point at comments: they go before them.
   await tx.delete(reaction).where(eq(reaction.issueId, id));
   await tx.delete(comment).where(eq(comment.issueId, id));
-  for (const t of [attachment, githubLink, inboxMark, notifyOutbox, run] as const) await tx.delete(t).where(eq(t.issueId, id));
+  // A rule outlives the question it was saved from (RSVA-644).
+  await tx.update(decisionRule).set({ decisionId: null }).where(inArray(decisionRule.decisionId, tx.select({ id: decision.id }).from(decision).where(eq(decision.issueId, id))));
+  for (const t of [attachment, githubLink, inboxMark, notifyOutbox, run, decision] as const) await tx.delete(t).where(eq(t.issueId, id));
   await tx.delete(document).where(eq(document.id, id));
   await tx.delete(issue).where(eq(issue.id, id));
   out.push({ m: "Issue", mid: id, a: "D", d: { projectId: row.projectId } });

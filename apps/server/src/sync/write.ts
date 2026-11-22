@@ -25,6 +25,7 @@ import { broadcast, prime } from "./hub.ts";
 import { memberOpSchemas, setMemberRole } from "./members.ts";
 import { membershipChanged } from "./membership.ts";
 import { checkIssueCycle, createCycle, cycleOpSchemas, deleteCycle, updateCycle } from "./cycles.ts";
+import { answerDecision, createDecision, decisionOpSchemas, type Comments } from "./decisions.ts";
 import { purgeIssueAs } from "./purge.ts";
 import { checkProjects, createLabel, createProject, createState, deleteLabel, deleteState, settingsOpSchemas, updateLabel, updateProject, updateState, updateWorkspace, type Touched } from "./settings.ts";
 import { forgetText, readTx } from "./log.ts";
@@ -135,6 +136,7 @@ const opSchema = z.discriminatedUnion("m", [
   z.discriminatedUnion("op", [z.object({ op: z.literal("update"), m: z.literal("Document"), ...target, set: z.object({ doc: z.looseObject({ type: z.literal("doc") }) }).strict(), base: uuid.nullable().optional() }).strict()]),
   ...settingsOpSchemas,
   ...cycleOpSchemas,
+  ...decisionOpSchemas,
   ...memberOpSchemas,
 ]);
 /** Each op's own fields and those of its `set`, by model and kind; `set` may be a union (a link or a file). */
@@ -350,6 +352,8 @@ const HANDLERS: { [O in Op as `${O["op"]}:${O["m"]}`]: (c: OpContext, op: O) => 
   "create:Attachment": (c, o) => (isFileCreate(o.set) ? addFile(c.tx, c.workspaceId, c.actorId, o.id, o.set) : addLink(c.tx, c.workspaceId, c.actorId, o.id, o.set)),
   "update:Attachment": (c, o) => editLink(c.tx, c.workspaceId, o.id, o.set),
   "delete:Attachment": (c, o) => removeLink(c.tx, c.workspaceId, o.id),
+  "create:Decision": (c, o) => createDecision(c.tx, c.workspaceId, c.actorId, o.id, o.set, comments(c.via)),
+  "update:Decision": (c, o) => answerDecision(c.tx, c.workspaceId, c.actorId, c.agent, o.id, o.set, comments(c.via)),
   "update:Document": (c, o) => updateDocument(c.tx, c.workspaceId, c.txId, o),
   "update:Workspace": (c, o) => updateWorkspace(c.tx, c.workspaceId, o.id, o.set),
   "create:Project": (c, o) => createProject(c.tx, c.workspaceId, c.touched, o.id, o.set),
@@ -366,6 +370,12 @@ const HANDLERS: { [O in Op as `${O["op"]}:${O["m"]}`]: (c: OpContext, op: O) => 
   "update:User": (c, o) => setMemberRole(c.tx, c.workspaceId, c.actorId, o.id, o.set.role),
   "delete:User": (c, o) => setMemberRole(c.tx, c.workspaceId, c.actorId, o.id, null),
 };
+
+/** The comments a decision writes with itself, through the handlers every comment goes through. */
+const comments = (via?: Via): Comments => ({
+  create: (tx, workspaceId, actorId, id, set) => createComment(tx, workspaceId, actorId, id, set, via),
+  remove: deleteComment,
+});
 
 async function applyOp(tx: Tx, workspaceId: string, actorId: string, txId: string, who: GuardActor, touched: Touched, op: Op, via?: Via): Promise<Pending | Pending[] | null> {
   if (op.m === "WorkflowState" || op.m === "Label") op = await guardOp(tx, workspaceId, who, op);
@@ -395,7 +405,8 @@ const movesProject = (op: Op) => op.m === "Issue" && op.op === "update" && op.se
 
 /** Who the process rules hold the actor to; read only when an op is one they look at (else "admin": nothing to hold). */
 async function guardActor(tx: Tx, workspaceId: string, actorId: string, ops: Op[], signedIn: boolean): Promise<GuardActor> {
-  if (!ops.some((op) => op.m === "WorkflowState" || op.m === "Label" || movesState(op) || movesProject(op))) return "admin";
+  // An answer to a decision is a person's: the actor's kind is read for it too (decisions.ts).
+  if (!ops.some((op) => op.m === "WorkflowState" || op.m === "Label" || movesState(op) || movesProject(op) || (op.m === "Decision" && op.op === "update"))) return "admin";
   const [u] = await tx
     .select({ kind: user.kind, role: member.role })
     .from(user)

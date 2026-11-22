@@ -21,7 +21,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
-import type { RunOutcome, RunStage, TileColor } from "./models.ts";
+import type { DecisionKind, DecisionOption, DecisionStatus, RunOutcome, RunStage, TileColor } from "./models.ts";
 
 const id = () => uuid().primaryKey().default(sql`uuidv7()`);
 const ts = () => timestamp({ withTimezone: true, mode: "string" });
@@ -396,21 +396,60 @@ export const run = pgTable(
 );
 
 /**
- * "Answer the same way next time" on the Decisions screen (RSVA-644): a question of a project and the answer a person
- * gave it, saved by them. Server-only, outside the log: Rules lists a person's own, and agents of the workspace read
- * them with the API. The questions and answers themselves are comments (`@rsva/protocol/decisions`).
+ * A question an agent puts to a person on an issue (RSVA-644): `rsva ask`, answered on the Decisions screen. The row is
+ * what the screen and the agent read; a comment on the issue mirrors it for people reading the thread (`commentId`), and
+ * the answer is a reply to that comment (`answerCommentId`), written in the same transaction. Synced like attachments.
+ * What it unblocks and how old it is are read from the issue's relations and `createdAt`, never given by the agent.
+ */
+export const decision = pgTable(
+  "decision",
+  {
+    ...onIssue(),
+    kind: text().$type<DecisionKind>().notNull(),
+    question: text().notNull(),
+    /** 2 to 4, each with what choosing it means (`detail`) and why one would (`why`; the recommended one's is the card's reason). */
+    options: jsonb().$type<DecisionOption[]>().notNull(),
+    /** 0-based index into `options`. */
+    recommended: smallint().notNull(),
+    /** One line each, as the agent wrote it: a path, an issue's key, a pull request's #number, a fact. */
+    evidence: jsonb().$type<string[]>().notNull(),
+    /** What the question is about, the same words each time it comes back: a rule answers a topic of a project. */
+    topic: text(),
+    askedById: uuid().notNull().references(() => user.id),
+    status: text().$type<DecisionStatus>().notNull().default("open"),
+    /** The answer's words: the option's label, or the person's own. */
+    answer: text(),
+    /** 0-based; null for an answer in one's own words. */
+    answerOption: smallint(),
+    answeredById: uuid().references(() => user.id),
+    answeredAt: ts(),
+    /** The comment that mirrors the question, and the reply that answered it. */
+    commentId: uuid(),
+    answerCommentId: uuid(),
+    /** The rule that answered it as it was asked, when one did. */
+    ruleId: uuid(),
+    createdAt: ts().notNull().defaultNow(),
+  },
+  (t) => [index().on(t.issueId), index().on(t.workspaceId)],
+);
+
+/**
+ * "Answer the same way next time" (RSVA-644): a topic of a project and the answer a person gave it. Server-only,
+ * outside the log. `rsva ask` with the same topic in the same project is answered by it at once; `rsva rules` lists
+ * them for agents to read before asking. Exact topics only: no matching of similar words.
  */
 export const decisionRule = pgTable(
   "decision_rule",
   {
     ...inProject(),
-    /** Who saved it. */
-    userId: uuid().notNull().references(() => user.id),
-    question: text().notNull(),
+    topic: text().notNull(),
     answer: text().notNull(),
+    /** Who saved it, and the decision it was saved from. */
+    userId: uuid().notNull().references(() => user.id),
+    decisionId: uuid().references(() => decision.id),
     createdAt: ts().notNull().defaultNow(),
   },
-  (t) => [index().on(t.workspaceId, t.userId)],
+  (t) => [uniqueIndex().on(t.projectId, t.topic)],
 );
 
 /**

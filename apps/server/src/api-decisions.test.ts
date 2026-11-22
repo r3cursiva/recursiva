@@ -1,77 +1,119 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatAnswer, formatAsk, type Ask, type OpenDecision } from "@rsva/protocol/decisions";
 import { apiFixture, asToken, fetchAs } from "./test/helpers.ts";
 
 const f = apiFixture();
 const json = async <T>(r: Promise<Response>) => (await (await r).json()) as T;
-const post = (as: typeof fetch, path: string, b: unknown) => as(f.api(path), { method: "POST", body: JSON.stringify(b) });
-const open = (as = f.owner) => json<{ decisions: OpenDecision[] }>(as(f.api("/decisions"))).then((r) => r.decisions);
+const post = (as: typeof fetch, path: string, b: unknown = {}) => as(f.api(path), { method: "POST", body: JSON.stringify(b) });
+const readOnly = async () => fetchAs({ ...(await asToken(f.ws.workspaceId, f.ws.ownerId, "read")), "content-type": "application/json" });
 
-const ASK: Ask = {
-  kind: "question",
-  question: "Which courier should ship orders to Greece?",
-  options: [
-    { label: "Speedy", detail: "€6.40 · 3–4 days" },
-    { label: "DHL Express", detail: "€14.90 · 1–2 days" },
-  ],
-  recommended: 0,
-  why: "Most orders are under €60.",
-  evidence: ["#77"],
-  group: null,
-};
-
-/** A new issue with the agent's question on it; titles apart, so the create is not refused as a likely duplicate. */
-async function issueWithAsk(title: string, ask: Ask, description?: string) {
-  const { key } = await json<{ key: string }>(post(f.agent, "/issues", { project: "CORE", title, ...(description ? { description } : {}) }));
-  const { id } = await json<{ id: string }>(post(f.agent, `/issues/${key}/comments`, { body: formatAsk(ask) }));
-  return { key, id };
+interface View {
+  id: string;
+  key: string;
+  status: string;
+  answer: string | null;
+  answerOption: number | null;
+  byRule: boolean;
+  recommended: number;
+  options: { label: string; detail: string; why: string }[];
+}
+interface CommentRow {
+  id: string;
+  parentId: string | null;
+  author: string;
+  body: string;
 }
 
-test("an agent's question waits on the owner until a person replies; an agent's reply and plain comments do not count", async () => {
-  const { key, id } = await issueWithAsk("Courier for the Greek orders", ASK);
-  await post(f.agent, `/issues/${key}/comments`, { body: "Just a note, not a question." });
-  const listed = (await open()).filter((d) => d.key === key);
-  assert.equal(listed.length, 1);
-  assert.deepEqual([listed[0]!.commentId, listed[0]!.question, listed[0]!.options.length, listed[0]!.recommended, listed[0]!.kind], [id, ASK.question, 2, 0, "question"]);
+const ASK = {
+  question: "Which courier should ship orders to Greece?",
+  options: [
+    { label: "Speedy", detail: "€6.40 · 3–4 days", why: "Most orders are under €60." },
+    { label: "DHL Express", detail: "€14.90 · 1–2 days" },
+  ],
+  recommend: 1,
+  evidence: ["#77"],
+};
 
-  await post(f.agent, `/issues/${key}/comments`, { body: "Still waiting", parentId: id });
-  assert.equal((await open()).filter((d) => d.key === key).length, 1, "an agent's reply is not an answer");
+/** A new issue of the agent's; titles apart, so the create is not refused as a likely duplicate. */
+async function issue(title: string) {
+  return (await json<{ key: string }>(post(f.agent, "/issues", { project: "CORE", title }))).key;
+}
+const ask = (key: string, b: unknown = ASK, as = f.agent) => post(as, `/issues/${key}/decisions`, b);
+const comments = async (key: string) => (await json<{ comments: CommentRow[] }>(f.owner(f.api(`/issues/${key}/comments`)))).comments;
+const open = async () => (await json<{ decisions: View[] }>(f.owner(f.api("/decisions")))).decisions;
 
-  const r = await post(f.owner, `/issues/${key}/comments`, { body: formatAnswer({ option: 0, label: "Speedy" }), parentId: id });
-  assert.equal(r.status, 201);
-  assert.equal((await open()).filter((d) => d.key === key).length, 0, "answered");
+test("an agent asks: the row and its mirror comment in one go, its run ends as asked, and the issue waits for the answer", async () => {
+  const key = await issue("Courier for the Greek orders");
+  assert.equal((await post(f.agent, `/issues/${key}/runs`, { stage: "work" })).status, 201);
+  const r = await ask(key);
+  assert.equal(r.status, 201, await r.clone().text());
+  const { decision, runEnded } = (await r.json()) as { decision: View; runEnded: boolean };
+  assert.deepEqual([decision.status, decision.recommended, decision.options[0]!.why, runEnded], ["open", 1, "Most orders are under €60.", true]);
+  assert.ok((await open()).some((d) => d.id === decision.id));
+  const [mirror] = await comments(key);
+  assert.match(mirror!.body, /^\*\*Question:\*\* Which courier/);
+  assert.match(mirror!.body, /1\. Speedy — €6\.40 · 3–4 days \(recommended\)/);
+
+  const runs = await json<{ runs: { outcome: string }[] }>(f.agent(f.api(`/issues/${key}/runs`)));
+  assert.equal(runs.runs[0]!.outcome, "asked");
+  const claim = await post(f.agent, `/issues/${key}/runs`, { stage: "work" });
+  assert.equal(claim.status, 409, "the issue waits for the answer");
+  assert.match(((await claim.json()) as { message: string }).message, /waits for a person's answer/);
+
+  const answered = await post(f.owner, `/decisions/${decision.id}/answer`, { option: 1 });
+  assert.equal(answered.status, 200, await answered.clone().text());
+  const after = ((await answered.json()) as { decision: View }).decision;
+  assert.deepEqual([after.status, after.answer, after.answerOption], ["answered", "Speedy", 1]);
+  const reply = (await comments(key)).find((c) => c.parentId === mirror!.id);
+  assert.equal(reply?.body, "**Decision:** Speedy");
+  assert.equal((await post(f.agent, `/issues/${key}/runs`, { stage: "work" })).status, 201, "answered: dispatchable again");
 });
 
-test("a hand-off carries its issue's Done when; a closed issue's question is not open", async () => {
-  const hand = await issueWithAsk("Cycle report as CSV", { ...ASK, kind: "hand", question: "Hand it to Claude?" }, "Plan.\n\n## Done when\n\n- Export CSV in the menu\n- A test covers an empty cycle\n");
-  const listed = (await open()).find((d) => d.key === hand.key);
-  assert.deepEqual(listed?.doneWhen, ["Export CSV in the menu", "A test covers an empty cycle"]);
-
-  const done = await issueWithAsk("Retention of the nightly dumps", ASK);
-  const r = await f.owner(f.api(`/issues/${done.key}`), { method: "PATCH", body: JSON.stringify({ state: "Done" }) });
-  assert.equal(r.status, 200, await r.text());
-  assert.equal((await open()).find((d) => d.key === done.key), undefined);
+test("who may: an agent asks but never answers or takes an answer back; a read-only token does neither; a malformed ask is a 400", async () => {
+  const key = await issue("Retention of the nightly dumps");
+  const ro = await readOnly();
+  assert.equal((await ask(key, ASK, ro)).status, 403, "read-only asks nothing");
+  assert.equal((await ask(key, { ...ASK, recommend: 3 })).status, 400);
+  assert.equal((await ask(key, { ...ASK, options: ["Only one"] })).status, 400);
+  const { decision } = await json<{ decision: View }>(ask(key));
+  assert.equal((await post(f.agent, `/decisions/${decision.id}/answer`, { option: 1 })).status, 403, "the agent that asked does not answer");
+  assert.equal((await post(ro, `/decisions/${decision.id}/answer`, { option: 1 })).status, 403);
+  assert.equal((await post(f.owner, `/decisions/${decision.id}/answer`, { text: "Neither: ship from Sofia" })).status, 200);
+  assert.equal((await post(f.agent, `/decisions/${decision.id}/undo`)).status, 403);
+  assert.equal((await post(ro, `/decisions/${decision.id}/undo`)).status, 403);
+  assert.equal((await post(f.owner, `/decisions/${decision.id}/answer`, { option: 2 })).status, 409, "answered once");
 });
 
-test("rules: a person saves, lists and removes their own; an agent reads them and saves none", async () => {
-  const saved = await post(f.owner, "/decision-rules", { project: "core", question: ASK.question, answer: "Speedy" });
-  assert.equal(saved.status, 201);
-  const { rule } = (await saved.json()) as { rule: { id: string; project: string } };
-  assert.equal(rule.project, "CORE");
+test("undo within the window opens the question again and takes the reply and the rule back", async () => {
+  const key = await issue("Backups on the new storage box");
+  const { decision } = await json<{ decision: View }>(ask(key, { ...ASK, topic: "backup retention" }));
+  await post(f.owner, `/decisions/${decision.id}/answer`, { option: 2, rule: true });
+  assert.ok((await json<{ rules: { topic: string }[] }>(f.owner(f.api("/decision-rules")))).rules.some((r) => r.topic === "backup retention"));
+  const undone = await post(f.owner, `/decisions/${decision.id}/undo`);
+  assert.equal(undone.status, 200, await undone.clone().text());
+  assert.equal(((await undone.json()) as { decision: View }).decision.status, "open");
+  assert.equal((await comments(key)).find((c) => c.parentId), undefined, "the reply is deleted (a tombstone the API leaves out)");
+  assert.ok(!(await json<{ rules: { topic: string }[] }>(f.owner(f.api("/decision-rules")))).rules.some((r) => r.topic === "backup retention"));
+});
 
-  const read = await json<{ rules: { id: string; mine: boolean; answer: string }[] }>(f.agent(f.api("/decision-rules")));
-  assert.deepEqual(read.rules.find((r) => r.id === rule.id) && { mine: false, answer: "Speedy" }, { mine: false, answer: "Speedy" });
-  assert.equal((await post(f.agent, "/decision-rules", { project: "CORE", question: "Q", answer: "A" })).status, 403);
-  assert.equal((await post(f.owner, "/decision-rules", { project: "NOPE", question: "Q", answer: "A" })).status, 400);
+test("a rule answers the same topic of the same project at once, with a reply naming it; people remove rules, agents and read-only tokens do not", async () => {
+  const first = await issue("Courier for Cyprus");
+  const { decision } = await json<{ decision: View }>(ask(first, { ...ASK, topic: "courier" }));
+  await post(f.owner, `/decisions/${decision.id}/answer`, { option: 1, rule: true });
+
+  const second = await issue("Courier for Malta");
+  const again = (await json<{ decision: View }>(ask(second, { ...ASK, question: "Who ships to Malta?", topic: "courier" }))).decision;
+  assert.deepEqual([again.status, again.answer, again.byRule], ["answered", "Speedy", true]);
+  const reply = (await comments(second)).find((c) => c.parentId);
+  assert.match(reply!.body, /^\*\*Decision:\*\* Speedy\n\nAnswered by the rule for “courier”/);
+  const other = (await json<{ decision: View }>(ask(second, { ...ASK, topic: "Courier" }))).decision;
+  assert.equal(other.status, "open", "exact topics only");
+
+  const { rules } = await json<{ rules: { id: string; topic: string; project: string; answer: string }[] }>(f.agent(f.api("/decision-rules")));
+  const rule = rules.find((r) => r.topic === "courier")!;
+  assert.deepEqual([rule.project, rule.answer], ["CORE", "Speedy"]);
   assert.equal((await f.agent(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 403);
-  const readOnly = fetchAs({ ...(await asToken(f.ws.workspaceId, f.ws.ownerId, "read")), "content-type": "application/json" });
-  assert.equal((await post(readOnly, "/decision-rules", { project: "CORE", question: "Q", answer: "A" })).status, 403);
-  assert.equal((await readOnly(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 403);
-  assert.equal((await readOnly(f.api("/decisions"))).status, 200, "reading is open to a read-only token");
-
+  assert.equal((await (await readOnly())(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 403);
   assert.equal((await f.owner(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 200);
-  const after = await json<{ rules: { id: string }[] }>(f.owner(f.api("/decision-rules")));
-  assert.equal(after.rules.find((r) => r.id === rule.id), undefined);
   assert.equal((await f.owner(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 404);
 });

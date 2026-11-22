@@ -2,7 +2,7 @@ import type { Equal, IssueModelName, IssueModels, ModelName, Models } from "@rsv
 import { sql as dsql } from "drizzle-orm";
 import { schema } from "../db.ts";
 
-const { user, member, project, workflowState, label, cycle, issue, attachment, comment, reaction, document } = schema;
+const { user, member, project, workflowState, label, cycle, issue, attachment, decision, comment, reaction, document } = schema;
 
 /** Columns sent to the client. Their order is the order of values in snapshot rows. */
 export const COLUMNS = {
@@ -30,6 +30,12 @@ export const COLUMNS = {
     id: attachment.id, issueId: attachment.issueId, kind: attachment.kind, url: attachment.url, title: attachment.title,
     sha256: attachment.sha256, size: attachment.size, mime: attachment.mime, createdById: attachment.createdById, createdAt: attachment.createdAt,
   },
+  Decision: {
+    id: decision.id, issueId: decision.issueId, kind: decision.kind, question: decision.question, options: decision.options,
+    recommended: decision.recommended, evidence: decision.evidence, topic: decision.topic, askedById: decision.askedById, status: decision.status,
+    answer: decision.answer, answerOption: decision.answerOption, answeredById: decision.answeredById, answeredAt: decision.answeredAt,
+    commentId: decision.commentId, answerCommentId: decision.answerCommentId, ruleId: decision.ruleId, createdAt: decision.createdAt,
+  },
 } as const satisfies Record<ModelName, object>;
 // Every field of a model's type is sent, and nothing else: a column added to db.ts reaches the client or fails here.
 true satisfies Equal<{ [M in ModelName]: keyof (typeof COLUMNS)[M] }, { [M in ModelName]: keyof Models[M] }>;
@@ -39,6 +45,7 @@ export const stateColumns = COLUMNS.WorkflowState;
 export const labelColumns = COLUMNS.Label;
 export const cycleColumns = COLUMNS.Cycle;
 export const attachmentColumns = COLUMNS.Attachment;
+export const decisionColumns = COLUMNS.Decision;
 
 /** Spelled out: drizzle leaves a one-table select's columns bare, and inside this subquery a bare `id` is the log's. */
 const DOCUMENT_TX = dsql<string | null>`(select a.tx_id from sync_action a where a.workspace_id = "document"."workspace_id" and a.model_id = "document"."id" and a.model = 'Document' order by a.id desc limit 1)`;

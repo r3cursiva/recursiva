@@ -19,7 +19,7 @@ export type IssueShelf = "live" | "archived" | "deleted";
 type Maps = { [M in AnyModel]: ObservableMap<string, All[M]> };
 
 /** Snapshot models: replaced by a new snapshot and written to IndexedDB. */
-export const MODELS = ["User", "Project", "WorkflowState", "Label", "Cycle", "Issue", "Attachment"] as const satisfies readonly ModelName[];
+export const MODELS = ["User", "Project", "WorkflowState", "Label", "Cycle", "Issue", "Attachment", "Decision"] as const satisfies readonly ModelName[];
 true satisfies Equal<(typeof MODELS)[number], ModelName>;
 
 /**
@@ -41,6 +41,7 @@ const PARENT: Partial<Record<AnyModel, "projectId" | "issueId">> = {
   Cycle: "projectId",
   Issue: "projectId",
   Attachment: "issueId",
+  Decision: "issueId",
   Comment: "issueId",
   Reaction: "issueId",
   GithubLink: "issueId",
@@ -77,6 +78,7 @@ export class Pool {
     Cycle: observable.map(undefined, { deep: false }),
     Issue: observable.map(undefined, { deep: false }),
     Attachment: observable.map(undefined, { deep: false }),
+    Decision: observable.map(undefined, { deep: false }),
     Comment: observable.map(undefined, { deep: false }),
     Reaction: observable.map(undefined, { deep: false }),
     Document: observable.map(undefined, { deep: false }),
