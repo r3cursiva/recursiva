@@ -8,6 +8,7 @@
 import { askKind, ASK_MARKERS, parseAsk, type DecisionRule, type OpenDecision } from "@rsva/protocol/decisions";
 import { canTriage } from "@rsva/protocol/my-work";
 import { isReviewer } from "@rsva/protocol";
+import { can, refusal } from "@rsva/policy";
 import { isClosedGroup, issueKey } from "@rsva/schema/models";
 import { and, asc, desc, eq, isNull, or, sql as dsql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -93,7 +94,9 @@ async function rulesOf(workspaceId: string, me: string): Promise<(DecisionRule &
 /** A person's own act: an agent does not save the rules it is to follow, and a read-only token writes nothing. */
 async function personWriting(req: FastifyRequest<{ Params: Ws }>) {
   const w = await workspaceOf(req);
-  if (w.viewer.scope === "read") throw new HttpError(403, "forbidden", "the token is read-only");
+  // The grant an answer needs (it is a comment), so a read-only token, or a custom one without it, is refused as the
+  // comments route refuses it; and only a person: a rule is the owner's answer, not the asking agent's.
+  if (!can(w.viewer, "comments.write")) throw new HttpError(403, "forbidden", refusal(w.viewer, "comments.write", "save or remove a rule"));
   const [me] = await db.select({ kind: user.kind }).from(user).where(eq(user.id, req.actor!.userId));
   if (me?.kind === "agent") throw new HttpError(403, "forbidden", "rules are saved by people");
   return w;

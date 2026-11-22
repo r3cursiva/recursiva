@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { formatAnswer, formatAsk, type Ask, type OpenDecision } from "@rsva/protocol/decisions";
-import { apiFixture } from "./test/helpers.ts";
+import { apiFixture, asToken, fetchAs } from "./test/helpers.ts";
 
 const f = apiFixture();
 const json = async <T>(r: Promise<Response>) => (await (await r).json()) as T;
@@ -65,6 +65,10 @@ test("rules: a person saves, lists and removes their own; an agent reads them an
   assert.equal((await post(f.agent, "/decision-rules", { project: "CORE", question: "Q", answer: "A" })).status, 403);
   assert.equal((await post(f.owner, "/decision-rules", { project: "NOPE", question: "Q", answer: "A" })).status, 400);
   assert.equal((await f.agent(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 403);
+  const readOnly = fetchAs({ ...(await asToken(f.ws.workspaceId, f.ws.ownerId, "read")), "content-type": "application/json" });
+  assert.equal((await post(readOnly, "/decision-rules", { project: "CORE", question: "Q", answer: "A" })).status, 403);
+  assert.equal((await readOnly(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 403);
+  assert.equal((await readOnly(f.api("/decisions"))).status, 200, "reading is open to a read-only token");
 
   assert.equal((await f.owner(f.api(`/decision-rules/${rule.id}`), { method: "DELETE" })).status, 200);
   const after = await json<{ rules: { id: string }[] }>(f.owner(f.api("/decision-rules")));
