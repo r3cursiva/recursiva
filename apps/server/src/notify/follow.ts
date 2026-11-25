@@ -24,7 +24,7 @@ import { prefsOf } from "./prefs.ts";
 import { MAX_AGE_MS } from "./send.ts";
 import { mayManage, mayRead } from "@rsva/policy";
 
-const { workspace, syncAction, notifyCursor, notifyOutbox, issue, comment, workflowState, project, member, user, inboxMark, telegramChat, telegramGroup } = schema;
+const { workspace, syncAction, notifyCursor, notifyOutbox, issue, comment, workflowState, project, member, user, inboxMark, pushDevice, telegramChat, telegramGroup } = schema;
 
 /** Actions classified per transaction: a burst (an import, a bulk edit) is taken in steps. */
 const BATCH = 500;
@@ -67,9 +67,10 @@ export async function behind(): Promise<string[]> {
 
 /**
  * Classifies one batch of the workspace's new actions; true while more are left. `telegram`: a bot sends this process's
- * Telegram rows; without one none are written, or they would wait in the outbox for ever.
+ * Telegram rows; without one none are written, or they would wait in the outbox for ever. `push` the same for push
+ * (RSVA-647): the server has the VAPID keys and sends.
  */
-export async function follow(workspaceId: string, now = new Date(), telegram = false): Promise<boolean> {
+export async function follow(workspaceId: string, now = new Date(), telegram = false, push = false): Promise<boolean> {
   return db.transaction(async (tx) => {
     // The cursor row is the lock: two runs over one workspace (a poke during a tick, two processes) take turns, and the
     // log's end is read only once the lock is held, so the second never moves the cursor back.
@@ -86,7 +87,7 @@ export async function follow(workspaceId: string, now = new Date(), telegram = f
     const upTo = log.length === BATCH ? log.at(-1)!.id : w!.s;
     if (log.length) {
       const { found, groups } = await classify(tx, workspaceId, log);
-      await schedule(tx, workspaceId, found, now, telegram);
+      await schedule(tx, workspaceId, found, now, telegram, push);
       if (telegram) await scheduleGroups(tx, workspaceId, groups, now);
     }
     await tx.update(notifyCursor).set({ lastId: dsql`greatest(${notifyCursor.lastId}, ${upTo})` }).where(eq(notifyCursor.workspaceId, workspaceId));
@@ -212,13 +213,15 @@ async function insertRows(tx: Tx, rows: (typeof notifyOutbox.$inferInsert)[]): P
 }
 
 /** What the people's rules let through, with the time each may go: after "already seen" and quiet hours. */
-async function schedule(tx: Tx, workspaceId: string, found: Found[], now: Date, withTelegram: boolean): Promise<void> {
+async function schedule(tx: Tx, workspaceId: string, found: Found[], now: Date, withTelegram: boolean, withPush: boolean): Promise<void> {
   if (!found.length) return;
   const people = [...new Set(found.map((f) => f.me))];
-  const [prefs, chats] = await Promise.all([
+  const [prefs, chats, devices] = await Promise.all([
     prefsOf(people),
     withTelegram ? tx.select({ userId: telegramChat.userId, error: telegramChat.error }).from(telegramChat).where(inArray(telegramChat.userId, people)) : [],
+    withPush ? tx.selectDistinct({ userId: pushDevice.userId }).from(pushDevice).where(inArray(pushDevice.userId, people)) : [],
   ]);
+  const push = new Set(devices.map((d) => d.userId));
   // Telegram only to a chat that takes messages; while one refuses, what was set to Telegram goes by email instead,
   // until the person connects it again.
   const telegram = new Set(chats.filter((c) => !c.error).map((c) => c.userId));
@@ -227,7 +230,7 @@ async function schedule(tx: Tx, workspaceId: string, found: Found[], now: Date, 
     const { prefs: p, timeZone } = prefs.get(me)!;
     // News a day old is not news: a notifier that was stopped for a while does not mail its backlog.
     if (now.getTime() - Date.parse(e.at) > MAX_AGE_MS || !workspaceAllows(p, workspaceId, event)) return [];
-    const row = (channel: "email" | "digest" | "telegram", due: Date, fallback = false) => ({
+    const row = (channel: "email" | "digest" | "telegram" | "push", due: Date, fallback = false) => ({
       userId: me,
       workspaceId,
       channel,
@@ -257,6 +260,8 @@ async function schedule(tx: Tx, workspaceId: string, found: Found[], now: Date, 
     // Telegram has no digest: Instantly or nothing. In quiet hours it goes silently (send.ts) or waits for their end.
     const toTelegram = delivery(p, event, "telegram") === "now";
     if (telegram.has(me) && toTelegram) out.push(row("telegram", through || p.telegram.silent ? ready : afterQuiet(ready, p.quiet, timeZone)));
+    // Push, as Telegram, is Instantly or nothing; in quiet hours it waits for their end, unless urgent rings through.
+    if (push.has(me) && delivery(p, event, "push") === "now") out.push(row("push", through ? ready : afterQuiet(ready, p.quiet, timeZone)));
     // Mailed as email's own instant would be: unless email already mails it at once.
     if (refusing.has(me) && toTelegram && how !== "now") out.push(row("email", through ? ready : afterQuiet(ready, p.quiet, timeZone), true));
     return out;

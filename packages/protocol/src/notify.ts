@@ -1,4 +1,4 @@
-// Notifications by email and Telegram (PLNR-198): which events reach a person where. The inbox gets everything (inbox.ts);
+// Notifications by email, Telegram and push (PLNR-198, RSVA-647): which events reach a person where. The inbox gets everything (inbox.ts);
 // these rules decide the other channels. One table for the server, which sends, and the settings page, which edits it.
 //
 // A person's settings keep only the cells they changed from the defaults: a default that improves later reaches everyone
@@ -12,7 +12,7 @@ import type { InboxKind } from "./inbox.ts";
 
 /** How an event reaches a channel: at once, in the morning digest (PLNR-201), or not at all. */
 export type Delivery = "now" | "digest" | "off";
-export type Channel = "email" | "telegram";
+export type Channel = "email" | "telegram" | "push";
 
 export type NotifyEvent = "plan" | "review" | "mention" | "assigned" | "reply" | "comment" | "state" | "due" | "cycle";
 
@@ -26,6 +26,8 @@ export interface NotifyRow {
   inbox?: false;
   email: Delivery;
   telegram: Delivery;
+  /** Push to the person's devices (RSVA-647): Instantly or Off, as Telegram, and the same defaults. */
+  push: Delivery;
 }
 
 /** The rows of "What reaches you where", by group, with their defaults (NotifRules artboard). */
@@ -33,30 +35,30 @@ export const NOTIFY_GROUPS: readonly { name: string; rows: readonly NotifyRow[] 
   {
     name: "Waiting on you",
     rows: [
-      { id: "plan", label: "Agent asks for a review", hint: "An agent moved your issue into review", personal: true, email: "now", telegram: "now" },
-      { id: "review", label: "Review requested", hint: "Someone hands work back to you", personal: true, email: "now", telegram: "now" },
+      { id: "plan", label: "Agent asks for a review", hint: "An agent moved your issue into review", personal: true, email: "now", telegram: "now", push: "now" },
+      { id: "review", label: "Review requested", hint: "Someone hands work back to you", personal: true, email: "now", telegram: "now", push: "now" },
     ],
   },
   {
     name: "About you",
     rows: [
-      { id: "mention", label: "Mentioned", hint: "@you in a comment or description", personal: true, email: "now", telegram: "now" },
-      { id: "assigned", label: "Assigned to you", personal: true, email: "now", telegram: "off" },
-      { id: "reply", label: "Reply to your comment", personal: true, email: "digest", telegram: "now" },
+      { id: "mention", label: "Mentioned", hint: "@you in a comment or description", personal: true, email: "now", telegram: "now", push: "now" },
+      { id: "assigned", label: "Assigned to you", personal: true, email: "now", telegram: "off", push: "off" },
+      { id: "reply", label: "Reply to your comment", personal: true, email: "digest", telegram: "now", push: "now" },
     ],
   },
   {
     name: "Issues you follow",
     rows: [
-      { id: "comment", label: "New comment", personal: false, email: "digest", telegram: "off" },
-      { id: "state", label: "State changed", hint: "In review, approved, done, canceled", personal: false, email: "off", telegram: "off" },
+      { id: "comment", label: "New comment", personal: false, email: "digest", telegram: "off", push: "off" },
+      { id: "state", label: "State changed", hint: "In review, approved, done, canceled", personal: false, email: "off", telegram: "off", push: "off" },
       // Telegram off: the artboard's Digest, which Telegram does not have (account-notifications.tsx draws it as Off).
-      { id: "due", label: "Due today", hint: "Your open issues, at your digest time", personal: false, inbox: false, email: "digest", telegram: "off" },
+      { id: "due", label: "Due today", hint: "Your open issues, at your digest time", personal: false, inbox: false, email: "digest", telegram: "off", push: "off" },
     ],
   },
   {
     name: "Cycles",
-    rows: [{ id: "cycle", label: "Cycle starts or ends", hint: "Cycles you lead, on their first and last day", personal: false, inbox: false, email: "now", telegram: "off" }],
+    rows: [{ id: "cycle", label: "Cycle starts or ends", hint: "Cycles you lead, on their first and last day", personal: false, inbox: false, email: "now", telegram: "off", push: "off" }],
   },
 ];
 
@@ -298,8 +300,32 @@ export interface NotifySettingsView {
   prefs: NotifyPrefs;
   workspaces: { id: string; slug: string; name: string; color: TileColor | null; role: string }[];
   telegram: TelegramView;
+  push: PushView;
   /** Where replies to notification emails go (PLNR-211), as in `infra-112.<token>@<domain>`; null when the server takes none. */
   replyDomain: string | null;
+}
+
+/** A device that takes push (RSVA-647): a browser's subscription, named after the browser and system that made it. */
+export interface PushDevice {
+  id: string;
+  name: string;
+  /** The push service's address of the subscription: the page finds its own device by it. */
+  endpoint: string;
+  createdAt: string;
+  /** The last push its service took. */
+  sentAt: string | null;
+}
+
+/** Push as the person sees it: the server's VAPID key to subscribe with (null: the server sends no push) and their devices. */
+export interface PushView {
+  key: string | null;
+  devices: PushDevice[];
+}
+
+/** POST /auth/push: a browser's subscription, as PushSubscription.toJSON() gives it. */
+export interface PushSubscribe {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
 }
 
 /** Whether Telegram gets anything: a linked chat that has not failed. */

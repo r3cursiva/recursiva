@@ -37,4 +37,10 @@ if (navigator.serviceWorker?.controller && router.route.name !== "issues") {
   void Promise.race([loadEditChunk(), new Promise((r) => setTimeout(r, CHUNK_WAIT_MS))]).catch(() => {}).finally(render);
 } else render();
 
-if (import.meta.env.PROD && "serviceWorker" in navigator) watchNewVersion();
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  watchNewVersion();
+  // A click on a push (RSVA-647) in a window already open: the worker names the issue's path, the app goes there.
+  navigator.serviceWorker.addEventListener("message", (e: MessageEvent<{ type?: string; path?: unknown }>) => {
+    if (e.data?.type === "rsva:open" && typeof e.data.path === "string" && e.data.path.startsWith("/") && !e.data.path.startsWith("//")) router.push(e.data.path);
+  });
+}

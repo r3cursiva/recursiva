@@ -873,6 +873,35 @@ export const telegramChat = pgTable("telegram_chat", {
 });
 
 /**
+ * A device that takes push notifications (RSVA-647): a browser's subscription with its push service, made when the person
+ * turns push on in Settings › Notifications on that device. The push column of their rules goes to every one of theirs.
+ * It lives as long as the sign-in it was made in: signing out, or ending that session from Security (a lost phone),
+ * stops the pushes too. Removed by the person, or by the notifier once the push service says the subscription is gone
+ * (404, 410). The endpoint is the push service's address for this one subscription, and unique: a browser subscribed
+ * again after another sign-in moves to it.
+ */
+export const pushDevice = pgTable(
+  "push_device",
+  {
+    id: id(),
+    userId: uuid().notNull().references(() => user.id),
+    sessionId: text()
+      .notNull()
+      .references(() => session.id, { onDelete: "cascade" }),
+    endpoint: text().notNull().unique(),
+    /** The browser's P-256 public key and its auth secret (RFC 8291), base64url: what a message is encrypted for. */
+    p256dh: text().notNull(),
+    auth: text().notNull(),
+    /** The browser and system that subscribed, from its User-Agent (auth/device.ts): "Safari on iOS". */
+    name: text().notNull(),
+    createdAt: ts().notNull().defaultNow(),
+    /** The last push its service took. */
+    sentAt: ts(),
+  },
+  (t) => [index().on(t.userId)],
+);
+
+/**
  * A Telegram group chat linked to a workspace (PLNR-204): everyone in it sees what it was given, the events of its
  * projects. Linked by a member with `/link@<bot> <code>` or the bot's startgroup link; it gets only what that member may
  * read, checked again when each message goes. Removed from the group, the bot marks it and sends nothing more.

@@ -48,6 +48,10 @@ services:
       RSVA_TRUST_PROXY: ${RSVA_TRUST_PROXY:-}
       RSVA_WORKSPACE_CREATORS: ${RSVA_WORKSPACE_CREATORS:-}
       RSVA_NOTIFY: ${RSVA_NOTIFY:-off}
+      # Push notifications (RSVA-647): both keys or neither (SELF_HOSTING.md, "Push"); unset, Settings › Notifications says
+      # push is not set up. Pushes go only with RSVA_NOTIFY=on.
+      RSVA_VAPID_PUBLIC_KEY: ${RSVA_VAPID_PUBLIC_KEY:-}
+      RSVA_VAPID_PRIVATE_KEY: ${RSVA_VAPID_PRIVATE_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

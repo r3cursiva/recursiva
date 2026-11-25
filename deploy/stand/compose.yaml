@@ -59,6 +59,10 @@ services:
       # Telegram notifications (ADR 0029); unset: "not set up on this server". The webhook is registered only with
       # RSVA_NOTIFY=on.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # Push notifications (RSVA-647): both keys or neither (SELF_HOSTING.md, "Push"); unset, Settings › Notifications says
+      # push is not set up. Pushes go only with RSVA_NOTIFY=on.
+      RSVA_VAPID_PUBLIC_KEY: ${RSVA_VAPID_PUBLIC_KEY:-}
+      RSVA_VAPID_PRIVATE_KEY: ${RSVA_VAPID_PRIVATE_KEY:-}
       # Replies by email (ADR 0034): all three or none; unset, notification emails carry no reply address.
       RSVA_REPLY_DOMAIN: ${RSVA_REPLY_DOMAIN:-}
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}

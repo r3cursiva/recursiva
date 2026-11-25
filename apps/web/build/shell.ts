@@ -94,12 +94,17 @@ export function serviceWorker(version: string, files: string[]): string {
   // A new version installs in the background and takes over open tabs at once (skipWaiting, clients.claim): a tab reloads
   // into it at a moment that interrupts nobody (src/lib/new-version.ts), and before that, if a lazy chunk it asks for is
   // gone (src/screens/load-edit-chunk.ts).
+  // A push (RSVA-647, server notify/push.ts) is shown as it came: a later one about the same issue (its tag) takes the
+  // earlier one's place. A click opens its path in a window of the app already open (main.tsx moves it there), or a new one.
   return `const V=${JSON.stringify(version)},F=${JSON.stringify(files.filter((f) => f !== "/index.html"))},P=${JSON.stringify(SERVER_PATHS)};
 self.addEventListener("install",e=>e.waitUntil(caches.open(V).then(c=>c.addAll(["/",...F])).then(()=>self.skipWaiting())));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(n=>n!==V).map(n=>caches.delete(n)))).then(()=>self.clients.claim())));
 self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin!==location.origin)return;
 if(r.mode==="navigate"){if(P.includes(u.pathname.split("/")[1]))return;e.respondWith(caches.match("/",{cacheName:V}).then(m=>m||fetch(r)));return}
 if(u.pathname.startsWith("/assets/"))e.respondWith(caches.match(r,{cacheName:V}).then(m=>m||fetch(r).then(res=>{if(res.ok){const c=res.clone();caches.open(V).then(x=>x.put(r,c))}return res})))});
+self.addEventListener("push",e=>{let d={};try{d=e.data.json()}catch{}e.waitUntil(self.registration.showNotification(d.title||"recursiva",{body:d.body||"",icon:"/icon-192.png",data:{url:d.url||"/"},...(d.tag?{tag:d.tag,renotify:true}:{})}))});
+self.addEventListener("notificationclick",e=>{e.notification.close();const u=new URL(e.notification.data&&e.notification.data.url||"/",location.origin),p=u.pathname+u.search+u.hash;
+e.waitUntil(self.clients.matchAll({type:"window",includeUncontrolled:true}).then(w=>{const c=w.find(x=>new URL(x.url).origin===location.origin);if(!c)return self.clients.openWindow(p);c.postMessage({type:"rsva:open",path:p});return c.focus()}))});
 `;
 }
 

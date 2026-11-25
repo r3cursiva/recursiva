@@ -81,7 +81,7 @@ const PAGES: Record<Page, { title: string; text: string; phoneText?: string; not
   },
   notifications: {
     title: "Notifications",
-    text: "What reaches you by email and in Telegram, and when. The inbox gets everything.",
+    text: "What reaches you by email, in Telegram and by push, and when. The inbox gets everything.",
     note: "Only you see this page",
   },
   email: {

@@ -9,11 +9,13 @@ import { requireActor } from "../auth/routes.ts";
 import { db, schema } from "../db.ts";
 import { parse } from "../http.ts";
 import { telegramView, type TelegramOptions } from "../telegram/routes.ts";
+import { pushView } from "./push.ts";
+import type { PushApi } from "./web-push.ts";
 
 const { accountSettings } = schema;
 
 const delivery = z.enum(["now", "digest", "off"]);
-const cell = z.object({ email: delivery, telegram: delivery }).partial().strict();
+const cell = z.object({ email: delivery, telegram: delivery, push: delivery }).partial().strict();
 const time = z.string().regex(QUIET_TIME, "a time is HH:MM");
 const D = NOTIFY_DEFAULTS;
 
@@ -63,13 +65,13 @@ export async function savePrefs(userId: string, prefs: NotifyPrefs): Promise<voi
     .onConflictDoUpdate({ target: accountSettings.userId, set: { notifications: prefs, updatedAt: dsql`now()` } });
 }
 
-export function registerNotifyRoutes(app: FastifyInstance, tg: TelegramOptions | null, replyDomain: string | null): void {
+export function registerNotifyRoutes(app: FastifyInstance, tg: TelegramOptions | null, replyDomain: string | null, push: PushApi | null): void {
   const session = { preHandler: requireActor({ sessionOnly: true }) };
 
   app.get("/auth/notifications", session, async (req): Promise<NotifySettingsView> => {
     const me = req.actor!.userId;
     const workspaces = await workspacesOf(me);
-    return { prefs: (await prefsOf([me])).get(me)!.prefs, workspaces, telegram: await telegramView(me, tg), replyDomain };
+    return { prefs: (await prefsOf([me])).get(me)!.prefs, workspaces, telegram: await telegramView(me, tg), push: await pushView(me, push), replyDomain };
   });
 
   // The whole settings at once: the page holds them all, and a change is one cell or one preset.
