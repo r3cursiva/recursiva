@@ -4,7 +4,7 @@
 //
 // At sending time the rules are read again (the person may have turned the row off since) and so is the inbox mark:
 // with "already seen" on, a notification the person read or archived in the app meanwhile is not mailed.
-import { delivery, plainMentions, workspaceAllows, type NotifyEvent, type NotifyPrefs } from "@rsva/protocol";
+import { delivery, plainMentions, workspaceAllows, type Channel, type NotifyEvent, type NotifyPrefs } from "@rsva/protocol";
 import { issueKey, issuePath, settingsPath, URGENT } from "@rsva/schema/models";
 import { and, asc, eq, gte, lt, lte, sql as dsql } from "drizzle-orm";
 import type { Mailer } from "../auth/mail.ts";
@@ -37,7 +37,7 @@ export type Outbox = typeof notifyOutbox.$inferSelect;
  * otherwise send each other's rows. It has no default, so a call cannot forget it; `null` is every workspace, which only
  * the server's loop (run.ts) wants.
  */
-export async function take(now: Date, channel: "email" | "telegram" | "group", workspaceId: string | null): Promise<Outbox[]> {
+export async function take(now: Date, channel: "email" | "telegram" | "group" | "push", workspaceId: string | null): Promise<Outbox[]> {
   return db.transaction(async (tx) => {
     // A row whose process died while sending it every time ends here, not in a loop.
     await tx
@@ -146,7 +146,7 @@ async function check(r: Outbox, p: NotifyPrefs, origin: string, unsubscribe: str
  * Whether a row still goes, read again at sending time: not too old, the cell still Instantly, the workspace still
  * allowed, not seen in the app meanwhile, and the issue and comment still there. Its facts if it goes.
  */
-export async function stillDue(r: Outbox, p: NotifyPrefs, channel: "email" | "telegram", origin: string, now: Date): Promise<IssueFacts | "dropped" | "seen"> {
+export async function stillDue(r: Outbox, p: NotifyPrefs, channel: Channel, origin: string, now: Date): Promise<IssueFacts | "dropped" | "seen"> {
   if (now.getTime() - Date.parse(r.createdAt) > STALE_MS) return "dropped";
   const event = r.event as NotifyEvent;
   if (delivery(p, event, channel) !== "now" || !workspaceAllows(p, r.workspaceId, event)) return "dropped";

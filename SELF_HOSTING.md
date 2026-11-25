@@ -43,6 +43,15 @@ from Settings. An invitation is a mail; without a mail provider the link is in t
 - **Mail.** Set `RESEND_API_KEY` and `RSVA_MAIL_FROM` (an address on a domain verified at <https://resend.com>) in `.env`, then
   `docker compose up -d`. Codes, invitations and (with `RSVA_NOTIFY=on`) notifications are then mailed. While `RSVA_MAIL=log`
   and no key is set, anyone who can read the server log can sign in as anyone: keep the app on localhost or on a network you trust.
+- **Push.** Notifications on phones and desktops, with the app closed, need a key pair of the server's (VAPID) and a domain
+  with TLS. Make one and add both lines it prints to `.env`, then `docker compose up -d`; each person turns push on per device
+  in Settings › Notifications. On iPhone and iPad push comes to the app added to the Home Screen.
+
+  ```sh
+  docker compose exec app node -e 'const k=require("crypto").generateKeyPairSync("ec",{namedCurve:"P-256"}).privateKey.export({format:"jwk"});const b=s=>Buffer.from(s,"base64url");console.log("RSVA_VAPID_PUBLIC_KEY="+Buffer.concat([Buffer.of(4),b(k.x),b(k.y)]).toString("base64url")+"\nRSVA_VAPID_PRIVATE_KEY="+k.d)'
+  ```
+
+  A new pair later stops push on every device until it is turned on there again.
 - **A domain.** Put a reverse proxy with TLS (Caddy, nginx, a tunnel) in front, keep `RSVA_BIND=127.0.0.1`, and set
   `RSVA_ALLOWED_HOSTS=recursiva.example.com`, `RSVA_ALLOWED_ORIGINS=https://recursiva.example.com` and `RSVA_TRUST_PROXY` to
   the proxy's address as the app sees it. Without them the app answers only to `localhost`.

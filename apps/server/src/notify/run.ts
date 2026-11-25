@@ -1,5 +1,5 @@
 // The notifier's loop (PLNR-200): classify what the logs gained (follow.ts), then send what is due (send.ts, and
-// telegram.ts when the server has a bot, group chats included), the digests (digest.ts) and the day's notices
+// telegram.ts when the server has a bot, group chats included, and push.ts when it has VAPID keys), the digests (digest.ts) and the day's notices
 // (morning.ts, group chats' cycles included). It runs every TICK_MS, and sooner after a write in this process:
 // notifyChanged() is called when a transaction is published (sync/write.ts). Writes of another process or an import
 // are picked up by the tick. Started by main.ts only: test servers do not mail notifications unless a test runs the
@@ -9,8 +9,10 @@ import { behind, follow } from "./follow.ts";
 import { sendDigests } from "./digest.ts";
 import { sendGroupCycles, sendMornings } from "./morning.ts";
 import { sendDue } from "./send.ts";
+import { sendPushDue } from "./push.ts";
 import { sendGroupsDue, sendTelegramDue } from "./telegram.ts";
 import type { TelegramApi } from "../telegram/api.ts";
+import type { PushApi } from "./web-push.ts";
 
 const TICK_MS = 30_000;
 /** A burst of writes wakes the loop once. */
@@ -24,11 +26,11 @@ export function notifyChanged(): void {
 }
 
 /** One pass: every workspace's new actions classified, then everything due sent. */
-async function notifyPass(mailer: Mailer, origin: string, log: Log, tg: TelegramApi | null, replyDomain: string | null): Promise<void> {
+async function notifyPass(mailer: Mailer, origin: string, log: Log, tg: TelegramApi | null, replyDomain: string | null, push: PushApi | null): Promise<void> {
   // One workspace that fails (its cursor stays, the next pass tries again) does not stop the others or the sending.
   for (const ws of await behind()) {
     try {
-      while (await follow(ws, new Date(), !!tg));
+      while (await follow(ws, new Date(), !!tg, !!push));
     } catch (e) {
       log.error(e, `notifier could not read the log of workspace ${ws}`);
     }
@@ -38,6 +40,7 @@ async function notifyPass(mailer: Mailer, origin: string, log: Log, tg: Telegram
     while ((await sendTelegramDue(tg, origin, new Date(), null)) > 0);
     while ((await sendGroupsDue(tg, origin, new Date(), null)) > 0);
   }
+  if (push) while ((await sendPushDue(push, origin, new Date(), null)) > 0);
   // Emails in place of Telegram messages that refused just now go in this pass, not the next.
   while ((await sendDue(mailer, origin, new Date(), null, replyDomain)) > 0);
   await sendDigests(mailer, origin, log);
@@ -51,7 +54,7 @@ type Log = { error: (e: unknown, msg: string) => void };
  * Starts the loop; the function it returns stops it and resolves once a pass under way has finished. With `replyDomain`
  * (the server takes replies, mail/inbound.ts) a single notification email gets its own reply address.
  */
-export function startNotifier(mailer: Mailer, origin: string, log: Log, tg: TelegramApi | null = null, replyDomain: string | null = null): () => Promise<void> {
+export function startNotifier(mailer: Mailer, origin: string, log: Log, tg: TelegramApi | null = null, replyDomain: string | null = null, push: PushApi | null = null): () => Promise<void> {
   let running: Promise<void> | null = null;
   let again = false;
   let soon: ReturnType<typeof setTimeout> | undefined;
@@ -59,7 +62,7 @@ export function startNotifier(mailer: Mailer, origin: string, log: Log, tg: Tele
   const run = (): void => {
     if (stopped) return;
     if (running) return void (again = true);
-    running = notifyPass(mailer, origin, log, tg, replyDomain)
+    running = notifyPass(mailer, origin, log, tg, replyDomain, push)
       .catch((e: unknown) => log.error(e, "notifier pass failed"))
       .finally(() => {
         running = null;

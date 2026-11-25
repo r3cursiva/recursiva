@@ -1,11 +1,12 @@
 // Settings › Notifications (PLNR-199), after the NotifRules artboard: the channels, "What reaches you where" (an event
 // by channel, a click cycles a cell), presets, timing and the mode per workspace. The inbox gets everything; these
-// rules decide email and Telegram. Changes save at once (PUT /auth/notifications) and show in the header's status.
+// rules decide email, Telegram and push (RSVA-647: a Push cell is Instantly or Off, once a device takes it; its card and
+// devices are account-push.tsx). Changes save at once (PUT /auth/notifications) and show in the header's status.
 //
 // An email cell cycles Instantly, Digest (the morning digest, PLNR-201), Off; how email comes is the Email page's
 // (account-email.tsx, PLNR-208). A Telegram cell is Instantly or Off, and only once a chat is linked (account-telegram.tsx,
 // PLNR-202). Not here yet, as the artboard has them: the rows without a source (PLNR-206).
-import { CaretRightIcon, CheckIcon, EnvelopeSimpleIcon, TelegramLogoIcon, TrayIcon } from "@phosphor-icons/react";
+import { BellRingingIcon, CaretRightIcon, CheckIcon, EnvelopeSimpleIcon, TelegramLogoIcon, TrayIcon } from "@phosphor-icons/react";
 import {
   NOTIFY_GROUPS,
   NOTIFY_PRESETS,
@@ -19,6 +20,7 @@ import {
   type NotifyPrefs,
   type NotifyRow,
   type NotifySettingsView,
+  type PushView,
   type TelegramView,
   type WorkspaceMode,
 } from "@rsva/protocol";
@@ -36,15 +38,17 @@ import { paths } from "../router.ts";
 import { store } from "../store.ts";
 import { saving } from "./save-status.tsx";
 import { ChoiceRow, ListNote } from "./settings-fields.tsx";
-import { telegramSummary, useConnectableSettings } from "./account-telegram.tsx";
+import { instantSummary, useConnectableSettings } from "./account-telegram.tsx";
+import { PushCard, PushDevices, useThisEndpoint } from "./account-push.tsx";
 import { workspaceTileTone } from "./workspace-switcher.tsx";
 import { Link } from "../link.tsx";
 
 const LABEL: Record<Delivery, string> = { now: "Instantly", digest: "Digest", off: "Off" };
 const NEXT: Record<ChannelId, Record<Delivery, Delivery>> = {
   email: { now: "digest", digest: "off", off: "now" },
-  // Telegram has no digest.
+  // Telegram and push have no digest.
   telegram: { now: "off", digest: "off", off: "now" },
+  push: { now: "off", digest: "off", off: "now" },
 };
 const MODES: readonly { value: WorkspaceMode; label: string }[] = [
   { value: "all", label: "Everything" },
@@ -57,7 +61,7 @@ const MODES: readonly { value: WorkspaceMode; label: string }[] = [
  * refusal reads them again (the toast says why). Until they are read, `placeholder` says why there is nothing.
  */
 export function useNotifySettings():
-  | { view: NotifySettingsView; save: (next: NotifyPrefs) => void; setTelegram: (t: TelegramView) => void; placeholder: null }
+  | { view: NotifySettingsView; save: (next: NotifyPrefs) => void; setTelegram: (t: TelegramView) => void; setPush: (p: PushView) => void; placeholder: null }
   | { view: null; placeholder: ReactNode } {
   const [view, setView] = useState<NotifySettingsView | null>(null);
   const [failed, setFailed] = useState(false);
@@ -75,7 +79,8 @@ export function useNotifySettings():
   };
   // Telegram changes through its own requests (link, disconnect): the page shows what they answered.
   const setTelegram = (telegram: TelegramView) => setView((v) => v && { ...v, telegram });
-  return { view, save, setTelegram, placeholder: null };
+  const setPush = (push: PushView) => setView((v) => v && { ...v, push });
+  return { view, save, setTelegram, setPush, placeholder: null };
 }
 
 /** How email stands, for the Email card and the Email page: "Instantly for 4 kinds of events, the rest in the 08:00 digest". */
@@ -92,13 +97,22 @@ export function emailSummary(prefs: NotifyPrefs): string {
 export const AccountNotifications = observer(function AccountNotifications() {
   const { settings, connect, dialog } = useConnectableSettings();
   if (!settings.view) return settings.placeholder;
-  const { view, save } = settings;
+  return <Notifications settings={settings} connect={connect} dialog={dialog} />;
+});
+
+function Notifications({ settings, connect, dialog }: { settings: Extract<ReturnType<typeof useNotifySettings>, { placeholder: null }>; connect: () => void; dialog: ReactNode }) {
+  const { view, save, setPush } = settings;
   const prefs = view.prefs;
   const tg = view.telegram;
+  const [endpoint, setEndpoint] = useThisEndpoint(view.push);
+  const onPush = (push: PushView, here?: string | null) => {
+    setPush(push);
+    if (here !== undefined) setEndpoint(here);
+  };
   return (
     <>
-      <SettingsSection id="channels" title="Channels" description="Inbox gets everything. Email and Telegram get what you pick below.">
-        <div className="grid grid-cols-3 gap-3 max-md:grid-cols-1">
+      <SettingsSection id="channels" title="Channels" description="Inbox gets everything. Email, Telegram and Push get what you pick below.">
+        <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
           <Channel icon={<TrayIcon />} name="Inbox" state={<Dot on />} status="Always on">
             Unread count in the panel and the browser tab. Read on one device, read everywhere.
           </Channel>
@@ -112,16 +126,23 @@ export const AccountNotifications = observer(function AccountNotifications() {
             {emailSummary(prefs)}.
           </Channel>
           <TelegramCard telegram={tg} prefs={prefs} onConnect={connect} />
+          <PushCard view={view.push} prefs={prefs} endpoint={endpoint} onChange={onPush} />
         </div>
         {dialog}
       </SettingsSection>
 
+      {view.push.key && view.push.devices.length > 0 && (
+        <SettingsSection id="push" title="Push devices" description="Each one gets what the Push column sends. Signing out on a device stops its push too.">
+          <PushDevices view={view.push} endpoint={endpoint} onChange={onPush} />
+        </SettingsSection>
+      )}
+
       <SettingsSection
         id="rules"
         title="What reaches you where"
-        description={`Click a cell: Instantly, Digest, Off; Telegram is Instantly or Off. Digest is the ${prefs.digest.time} email${prefs.digest.on ? "" : ", turned off on the Email page"}.`}
+        description={`Click a cell: Instantly, Digest, Off; Telegram and Push are Instantly or Off. Digest is the ${prefs.digest.time} email${prefs.digest.on ? "" : ", turned off on the Email page"}.`}
       >
-        <Matrix prefs={prefs} telegram={telegramDelivering(tg)} onChange={save} />
+        <Matrix prefs={prefs} telegram={telegramDelivering(tg)} push={view.push.devices.length > 0} onChange={save} />
         <div className="flex flex-wrap items-center gap-2 pt-3">
           <span className="mr-0.5 text-caption text-ink-3">Email, start from</span>
           {NOTIFY_PRESETS.map((p) => (
@@ -195,9 +216,9 @@ export const AccountNotifications = observer(function AccountNotifications() {
       </SettingsSection>
     </>
   );
-});
+}
 
-const Dot = ({ on, warn }: { on: boolean; warn?: boolean }) => <span aria-hidden className={cn("size-[7px] shrink-0 rounded-full", warn ? "bg-warning" : on ? "bg-success" : "border border-rule-strong")} />;
+export const Dot = ({ on, warn }: { on: boolean; warn?: boolean }) => <span aria-hidden className={cn("size-[7px] shrink-0 rounded-full", warn ? "bg-warning" : on ? "bg-success" : "border border-rule-strong")} />;
 
 function TelegramCard({ telegram, prefs, onConnect }: { telegram: TelegramView; prefs: NotifyPrefs; onConnect: () => void }) {
   const { bot, chat } = telegram;
@@ -222,7 +243,7 @@ function TelegramCard({ telegram, prefs, onConnect }: { telegram: TelegramView; 
     );
   return (
     <Channel icon={icon} name="Telegram" state={<Dot on warn={!!chat.error} />} status={chat.username ? `@${chat.username}` : chat.name} link={{ href: paths.accountTelegram(), label: "Telegram settings" }}>
-      {chat.error ? "Stopped delivering, by email meanwhile: connect it again on its page." : `${telegramSummary(prefs)}${groupsLine(telegram.groups.filter((g) => !g.error && g.events.length && g.projectIds.length).length)}.`}
+      {chat.error ? "Stopped delivering, by email meanwhile: connect it again on its page." : `${instantSummary(prefs, "telegram")}${groupsLine(telegram.groups.filter((g) => !g.error && g.events.length && g.projectIds.length).length)}.`}
     </Channel>
   );
 }
@@ -230,7 +251,7 @@ function TelegramCard({ telegram, prefs, onConnect }: { telegram: TelegramView; 
 /** ", and 2 group chats": the groups that deliver, beside the personal chat. */
 const groupsLine = (n: number) => (n ? `, and ${n === 1 ? "a group chat" : `${n} group chats`}` : "");
 
-function Channel({ icon, name, state, status, link, action, children }: { icon: ReactNode; name: string; state: ReactNode; status: string; link?: { href: string; label: string }; action?: ReactNode; children: ReactNode }) {
+export function Channel({ icon, name, state, status, link, action, children }: { icon: ReactNode; name: string; state: ReactNode; status: string; link?: { href: string; label: string }; action?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2.5 rounded-(--float-radius) border bg-panel px-4 py-3.5">
       <span className="flex items-center gap-[9px] text-[13.5px] font-semibold [&_svg]:size-4 [&_svg]:text-ink-2">
@@ -253,9 +274,10 @@ function Channel({ icon, name, state, status, link, action, children }: { icon: 
   );
 }
 
-const row = "grid grid-cols-[minmax(0,1fr)_90px_120px_120px] items-center gap-x-2 px-3.5 max-md:grid-cols-[minmax(0,1fr)_92px_92px] max-md:px-3";
+// On a phone the Inbox column goes and the channels' headers are their icons alone.
+const row = "grid grid-cols-[minmax(0,1fr)_72px_104px_104px_104px] items-center gap-x-2 px-3.5 max-md:grid-cols-[minmax(0,1fr)_66px_66px_66px] max-md:gap-x-1.5 max-md:px-3";
 
-function Matrix({ prefs, telegram, onChange }: { prefs: NotifyPrefs; telegram: boolean; onChange: (p: NotifyPrefs) => void }) {
+function Matrix({ prefs, telegram, push, onChange }: { prefs: NotifyPrefs; telegram: boolean; push: boolean; onChange: (p: NotifyPrefs) => void }) {
   return (
     <div role="table" aria-label="What reaches you where" className="overflow-hidden rounded-(--float-radius) border bg-panel">
       <div role="row" className={cn(row, "min-h-9 bg-ground text-[12px] text-ink-2")}>
@@ -264,13 +286,17 @@ function Matrix({ prefs, telegram, onChange }: { prefs: NotifyPrefs; telegram: b
           <TrayIcon className="size-3.5" />
           Inbox
         </span>
-        <span role="columnheader" className="inline-flex items-center gap-1.5">
+        <span role="columnheader" className="inline-flex items-center gap-1.5 max-md:justify-center">
           <EnvelopeSimpleIcon className="size-3.5" />
-          Email
+          <span className="max-md:sr-only">Email</span>
         </span>
-        <span role="columnheader" className="inline-flex items-center gap-1.5">
+        <span role="columnheader" className="inline-flex items-center gap-1.5 max-md:justify-center">
           <TelegramLogoIcon className="size-3.5" />
           <span className="max-md:sr-only">Telegram</span>
+        </span>
+        <span role="columnheader" className="inline-flex items-center gap-1.5 max-md:justify-center">
+          <BellRingingIcon className="size-3.5" />
+          <span className="max-md:sr-only">Push</span>
         </span>
       </div>
       {NOTIFY_GROUPS.map((g) => (
@@ -281,7 +307,7 @@ function Matrix({ prefs, telegram, onChange }: { prefs: NotifyPrefs; telegram: b
             </span>
           </div>
           {g.rows.map((r) => (
-            <MatrixRow key={r.id} r={r} prefs={prefs} telegram={telegram} onChange={onChange} />
+            <MatrixRow key={r.id} r={r} prefs={prefs} telegram={telegram} push={push} onChange={onChange} />
           ))}
         </div>
       ))}
@@ -289,7 +315,12 @@ function Matrix({ prefs, telegram, onChange }: { prefs: NotifyPrefs; telegram: b
   );
 }
 
-function MatrixRow({ r, prefs, telegram, onChange }: { r: NotifyRow; prefs: NotifyPrefs; telegram: boolean; onChange: (p: NotifyPrefs) => void }) {
+function MatrixRow({ r, prefs, telegram, push, onChange }: { r: NotifyRow; prefs: NotifyPrefs; telegram: boolean; push: boolean; onChange: (p: NotifyPrefs) => void }) {
+  const none = (why: string) => (
+    <span role="cell" className="text-faint max-md:text-center" title={why}>
+      —
+    </span>
+  );
   const cell = (channel: ChannelId, by: string) => <Cell r={r} channel={channel} by={by} prefs={prefs} onChange={onChange} />;
   return (
     <div role="row" className={cn(row, "min-h-11 border-t border-rule-soft")}>
@@ -307,27 +338,23 @@ function MatrixRow({ r, prefs, telegram, onChange }: { r: NotifyRow; prefs: Noti
         </span>
       )}
       <span role="cell">{cell("email", "by email")}</span>
-      {telegram ? (
-        <span role="cell">{cell("telegram", "in Telegram")}</span>
-      ) : (
-        <span role="cell" className="text-faint" title="Telegram is not connected">
-          —
-        </span>
-      )}
+      {telegram ? <span role="cell">{cell("telegram", "in Telegram")}</span> : none("Telegram is not connected")}
+      {/* A day's notice (due today, a cycle's day) is a morning message: email and Telegram have one, push does not. */}
+      {r.inbox === false ? none("Not sent by push") : push ? <span role="cell">{cell("push", "by push")}</span> : none("Push is not on for any device")}
     </div>
   );
 }
 
 function Cell({ r, channel, by, prefs, onChange }: { r: NotifyRow; channel: ChannelId; by: string; prefs: NotifyPrefs; onChange: (p: NotifyPrefs) => void }) {
-  // Telegram has no digest: a cell saved as Digest there reads, and is sent, as Off.
-  const value = channel === "telegram" && delivery(prefs, r.id, channel) === "digest" ? "off" : delivery(prefs, r.id, channel);
+  // Telegram and push have no digest: a cell saved as Digest there reads, and is sent, as Off.
+  const value = channel !== "email" && delivery(prefs, r.id, channel) === "digest" ? "off" : delivery(prefs, r.id, channel);
   return (
     <button
       type="button"
       aria-label={`${r.label} ${by}: ${LABEL[value]}. Change`}
       onClick={() => onChange(withCell(prefs, r.id, channel, NEXT[channel][value]))}
       className={cn(
-        "inline-flex h-[26px] min-w-[84px] items-center justify-center rounded-[13px] border px-2.5 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:h-8 max-md:min-w-[88px]",
+        "inline-flex h-[26px] min-w-[84px] items-center justify-center rounded-[13px] border px-2.5 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:h-8 max-md:w-full max-md:min-w-0 max-md:px-1",
         value === "now"
           ? "border-inverse bg-inverse text-inverse-ink"
           : value === "digest"

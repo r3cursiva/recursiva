@@ -21,6 +21,8 @@ import { authenticate, authenticateFrom, needsOrigin } from "./auth/actor.ts";
 import { mailerFromEnv, PUBLIC_ORIGIN, type Mailer } from "./auth/mail.ts";
 import { inboundFromEnv, registerInbound, type InboundConfig } from "./mail/inbound.ts";
 import { registerNotifyRoutes } from "./notify/prefs.ts";
+import { registerPush } from "./notify/push.ts";
+import { pushFromEnv, type PushApi } from "./notify/web-push.ts";
 import { telegramFromEnv, type TelegramApi } from "./telegram/api.ts";
 import { registerTelegram, type TelegramOptions } from "./telegram/routes.ts";
 import { registerUnsubscribe } from "./notify/unsubscribe.ts";
@@ -63,6 +65,8 @@ export interface AppOptions {
   telegram?: TelegramOptions | null;
   /** Sign-in codes also go to linked chats through it (PLNR-215): only the live server's bot (main.ts); none by default. */
   signInTelegram?: TelegramApi | null;
+  /** Push notifications (RSVA-647); by default RSVA_VAPID_PUBLIC_KEY's and RSVA_VAPID_PRIVATE_KEY's, none without them. */
+  push?: PushApi | null;
   /** Replies by email (PLNR-211); by default RSVA_REPLY_DOMAIN's with Resend's webhook secret and key, none without them. */
   inbound?: InboundConfig | null;
   /** How often a socket must answer a protocol ping, ms (sync/socket.ts). */
@@ -162,7 +166,9 @@ export function buildApp(opts: AppOptions = {}) {
   registerAuthRoutes(app, mailer, opts.signInTelegram ?? null);
   const telegram = opts.telegram !== undefined ? opts.telegram : telegramFromEnv();
   const inbound = opts.inbound !== undefined ? opts.inbound : inboundFromEnv();
-  registerNotifyRoutes(app, telegram, inbound?.domain ?? null);
+  const push = opts.push !== undefined ? opts.push : pushFromEnv();
+  registerNotifyRoutes(app, telegram, inbound?.domain ?? null, push);
+  registerPush(app, push);
   const blobs = opts.blobs ?? blobStoreFromEnv();
   registerTelegram(app, telegram, mailer, blobs);
   registerInbound(app, inbound, mailer, PUBLIC_ORIGIN ?? "");

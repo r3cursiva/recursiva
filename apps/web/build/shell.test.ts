@@ -2,12 +2,24 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FIRST_FONT, firstFontPreload, serviceWorker } from "./shell.ts";
 
-/** Runs the generated worker against a stub `self` and reports which fetches it answers itself. */
-function worker() {
+/** The generated worker run against a stub `self`: its listeners, and what it asked of the registration and the windows. */
+function run(windows: { url: string; postMessage: (m: unknown) => void; focus: () => Promise<unknown> }[] = []) {
   const listeners = new Map<string, (e: unknown) => void>();
-  const self = { addEventListener: (type: string, fn: (e: unknown) => void) => listeners.set(type, fn) };
+  const shown: { title: string; options: Record<string, unknown> }[] = [];
+  const opened: string[] = [];
+  const self = {
+    addEventListener: (type: string, fn: (e: unknown) => void) => listeners.set(type, fn),
+    registration: { showNotification: async (title: string, options: Record<string, unknown>) => void shown.push({ title, options }) },
+    clients: { matchAll: async () => windows, openWindow: async (p: string) => void opened.push(p) },
+  };
   const caches = { match: async () => new Response("shell") };
   new Function("self", "caches", "location", serviceWorker("v1", ["/assets/index.js"]))(self, caches, { origin: "https://plan.test" });
+  return { listeners, shown, opened };
+}
+
+/** Which fetches the worker answers itself. */
+function worker() {
+  const { listeners } = run();
   return (path: string, mode = "navigate") => {
     let answered = false;
     listeners.get("fetch")!({ request: { method: "GET", url: `https://plan.test${path}`, mode }, respondWith: () => (answered = true) });
@@ -39,4 +51,32 @@ test("the first font is preloaded only on a load the worker controls: a first vi
   };
   assert.deepEqual(run(null), []);
   assert.deepEqual(run({}), [{ rel: "preload", as: "font", type: "font/woff2", crossOrigin: "anonymous", href: "/assets/onest-latin-wght-normal-x.woff2" }]);
+});
+
+/** Dispatches an event that waits (waitUntil) and resolves once what it waits for has. */
+async function dispatch(listeners: Map<string, (e: unknown) => void>, type: string, e: Record<string, unknown>) {
+  let wait: Promise<unknown> = Promise.resolve();
+  listeners.get(type)!({ ...e, waitUntil: (p: Promise<unknown>) => (wait = p) });
+  await wait;
+}
+
+test("a push is shown with its title, text and issue; one about the same issue replaces it", async () => {
+  const { listeners, shown } = run();
+  const data = { title: "Ann mentioned you on ENG-12", body: "Rotate the edge nodes", url: "https://plan.test/atlas/browse/ENG-12", tag: "0193" };
+  await dispatch(listeners, "push", { data: { json: () => data } });
+  assert.deepEqual(shown, [{ title: data.title, options: { body: data.body, icon: "/icon-192.png", data: { url: data.url }, tag: "0193", renotify: true } }]);
+});
+
+test("a click on a push moves an open window to its issue, or opens one", async () => {
+  const notification = { data: { url: "https://plan.test/atlas/browse/ENG-12" }, close: () => {} };
+  const fresh = run();
+  await dispatch(fresh.listeners, "notificationclick", { notification });
+  assert.deepEqual(fresh.opened, ["/atlas/browse/ENG-12"]);
+  const messages: unknown[] = [];
+  let focused = false;
+  const open = run([{ url: "https://plan.test/atlas/inbox", postMessage: (m) => messages.push(m), focus: async () => (focused = true) }]);
+  await dispatch(open.listeners, "notificationclick", { notification });
+  assert.deepEqual(messages, [{ type: "rsva:open", path: "/atlas/browse/ENG-12" }]);
+  assert.ok(focused);
+  assert.deepEqual(open.opened, []);
 });

@@ -16,6 +16,7 @@ import { sweepTrash } from "./sync/purge.ts";
 import { sweepCycles } from "./sync/rollover.ts";
 import { closeSockets } from "./sync/socket.ts";
 import { telegramFromEnv } from "./telegram/api.ts";
+import { pushFromEnv } from "./notify/web-push.ts";
 
 const port = Number(process.env.PORT ?? 3800);
 // Loopback by default; production sets HOST and puts Caddy in front (RSVA_ALLOWED_HOSTS/ORIGINS, RSVA_TRUST_PROXY).
@@ -44,12 +45,15 @@ const notify = process.env.RSVA_NOTIFY === "on" || (process.env.RSVA_NOTIFY !== 
 // Telegram goes only from the live server (RSVA_NOTIFY=on), notifications and sign-in codes alike: a local run on a
 // copy of the data holds real chat IDs, and mail to the log does not make its messages to them any less real.
 const telegramLive = telegram && process.env.RSVA_NOTIFY === "on" ? telegram : null;
-const app = buildApp({ files, mailer, telegram, signInTelegram: telegramLive?.api ?? null, inbound });
+// Push (RSVA-647) the same way: a local run may take subscriptions and send a test, the notifier pushes only on the live one.
+const push = pushFromEnv();
+const pushLive = process.env.RSVA_NOTIFY === "on" ? push : null;
+const app = buildApp({ files, mailer, telegram, signInTelegram: telegramLive?.api ?? null, inbound, push });
 mailLog = (msg) => app.log.warn(msg);
 if (staticError) app.log.warn({ webDist }, "no web build, serving API only");
 else app.log.info({ files: files.size, webDist }, "static loaded");
 
-const stopNotifier = notify ? startNotifier(mailer, PUBLIC_ORIGIN ?? `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`, app.log, telegramLive?.api ?? null, inbound?.domain ?? null) : async () => {};
+const stopNotifier = notify ? startNotifier(mailer, PUBLIC_ORIGIN ?? `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`, app.log, telegramLive?.api ?? null, inbound?.domain ?? null, pushLive) : async () => {};
 if (!notify) app.log.warn("notifications are not mailed: set RSVA_NOTIFY=on to mail them");
 
 // Telegram (PLNR-202) calls back the server that registered last, so only the live one does (and with its https origin):

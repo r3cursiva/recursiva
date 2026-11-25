@@ -36,8 +36,8 @@ import { AddGroupButton, Delivering, DestRow, GroupDialog, GroupRow, removeGroup
 import { Link } from "../link.tsx";
 
 /** How Telegram stands, for its card and its page: "Instantly for 4 kinds of events". */
-export function telegramSummary(prefs: NotifyPrefs): string {
-  const n = NOTIFY_ROWS.filter((r) => delivery(prefs, r.id, "telegram") === "now").length;
+export function instantSummary(prefs: NotifyPrefs, channel: "telegram" | "push"): string {
+  const n = NOTIFY_ROWS.filter((r) => delivery(prefs, r.id, channel) === "now" && (channel === "telegram" || r.inbox !== false)).length;
   return n ? `Instantly for ${n} ${n === 1 ? "kind" : "kinds"} of events` : "Nothing yet: pick events in Notifications";
 }
 
@@ -80,7 +80,7 @@ export const AccountTelegram = observer(function AccountTelegram() {
                 sub={[chat.name, chat.username && `@${chat.username}`].filter(Boolean).join(" · ")}
                 what={
                   <Link href={rules} className="truncate rounded-[5px] outline-none transition-colors duration-120 hover:text-ink focus-visible:ring-2 focus-visible:ring-ring max-md:inline-flex max-md:min-h-8 max-md:items-center">
-                    {telegramSummary(p)}
+                    {instantSummary(p, "telegram")}
                   </Link>
                 }
                 status={<Delivering ok error={chat.error} />}
