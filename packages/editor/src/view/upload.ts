@@ -71,26 +71,46 @@ function placeholderAt(state: EditorState, id: object): number | null {
   return key.getState(state)?.find(undefined, undefined, (spec) => spec.id === id)[0]?.from ?? null;
 }
 
+/**
+ * Where a file's node goes. In an empty paragraph it takes the paragraph's place, and the placeholders of the files still
+ * on their way would go with it: of three pictures dropped into an empty comment one arrived. While others wait there,
+ * it goes after the paragraph, which stays for them; the last one to land takes its place.
+ */
+function landing(state: EditorState, at: number): number {
+  const $at = state.doc.resolve(at);
+  const others = $at.depth > 0 && $at.parent.content.size === 0 && key.getState(state)!.find($at.start(), $at.end()).length > 1;
+  return others ? $at.after() : at;
+}
+
 /** An image, or a paragraph of one link: a file in a comment, which reads as a card (render.ts). */
 function nodeOf(got: { src: string; alt: string } | { href: string; name: string }): Node {
   if ("src" in got) return schema.nodes.image!.create({ src: got.src, alt: imageAltOf(got.alt) });
   return schema.nodes.paragraph!.create(null, schema.text(got.name, [schema.marks.link!.create({ href: got.href })]));
 }
 
-/** Hands the files to the app and puts each image or file where its placeholder ended up. */
+/**
+ * Hands the files to the app and puts each image or file where its placeholder ended up. A node lands in front of those
+ * that landed at the same place before it, so the files are placed from the last to the first, each after the ones behind
+ * it: three pictures dropped together stand in their order.
+ */
 export function upload(view: EditorView, files: File[], pos: number, onFiles: FileHandler): void {
   const results = onFiles(files);
-  files.forEach((file, i) => {
+  const ids = files.map((file) => {
     const id = {};
     view.dispatch(view.state.tr.setMeta(key, { add: { id, pos, name: file.name || "image" } } satisfies Meta));
-    void (results[i] ?? Promise.resolve(null))
-      .catch(() => null)
+    return id;
+  });
+  let turn: Promise<unknown> = Promise.resolve();
+  for (let i = files.length - 1; i >= 0; i--) {
+    const got = (results[i] ?? Promise.resolve(null)).catch(() => null);
+    turn = turn
+      .then(() => got)
       .then((got) => {
         if (view.isDestroyed) return;
-        const at = placeholderAt(view.state, id);
-        const tr = view.state.tr.setMeta(key, { remove: id } satisfies Meta);
-        if (got && at !== null) tr.replaceRangeWith(at, at, nodeOf(got));
+        const at = placeholderAt(view.state, ids[i]!);
+        const tr = view.state.tr.setMeta(key, { remove: ids[i]! } satisfies Meta);
+        if (got && at !== null) tr.replaceRangeWith(landing(view.state, at), landing(view.state, at), nodeOf(got));
         view.dispatch(tr);
       });
-  });
+  }
 }

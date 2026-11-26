@@ -15,7 +15,7 @@ import { renderDoc } from "../src/render.ts";
 import { schema } from "../src/schema.ts";
 import { DocError, validateDoc } from "../src/validate.ts";
 import { commandFor, setLink } from "../src/view/commands.ts";
-import { uploadPlugin } from "../src/view/upload.ts";
+import { upload, uploadPlugin } from "../src/view/upload.ts";
 import { PAGE_DRAG } from "../src/drag.ts";
 import { issueRefKeys } from "../src/view/issue-ref.ts";
 import { applyBlock, caretQuery, dismissQuery, insertIssueKey, insertMention } from "../src/view/caret-query.ts";
@@ -806,4 +806,18 @@ test("a drop takes files from outside the page; an image the page drags goes to 
   assert.equal(taken.length, 0);
   assert.equal(drop(["Files"]), true);
   assert.deepEqual(taken, [[image]]);
+});
+
+test("several files dropped into an empty paragraph all arrive: the first image does not take the others' places with it", async () => {
+  const src = (n: number) => `/files/acme/${String(n).repeat(64)}`;
+  const onFiles = (files: File[]) => files.map((f, i) => Promise.resolve({ src: src(i + 1), alt: f.name }));
+  const images = async (md: string, pos: number) => {
+    const v = { state: EditorState.create({ doc: Node.fromJSON(schema, fromMarkdown(md)), plugins: [uploadPlugin(onFiles)] }), isDestroyed: false, dispatch: (tr: Transaction) => void (v.state = v.state.apply(tr)) };
+    upload(v as never, ["a", "b", "c"].map((n) => new File([new Uint8Array(4)], n, { type: "image/png" })), pos, onFiles);
+    await new Promise((r) => setTimeout(r));
+    return plain(v.state.doc).content!.map((n) => (n.type === "image" ? (n.attrs!.alt as string) : n.type));
+  };
+  // An empty comment: the pictures and nothing else, as one picture alone leaves it.
+  assert.deepEqual(await images("", 1), ["a", "b", "c"]);
+  assert.deepEqual(await images("Text", 5), ["paragraph", "a", "b", "c"]);
 });
