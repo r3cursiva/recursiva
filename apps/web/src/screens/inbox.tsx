@@ -375,7 +375,8 @@ export const Inbox = observer(function Inbox({ ws }: { ws: string }) {
                     onClick={() => view.setShow(show === "unread" ? "all" : "unread")}
                   >
                     <TrayIcon />
-                    <span aria-hidden className="absolute top-[5px] right-[5px] size-[5px] rounded-full bg-signal" />
+                    {/* The dot is the state "something is unread", not a part of the glyph: with all read it is gone. */}
+                    {totalUnread > 0 && <span aria-hidden data-unread-dot className="absolute top-[5px] right-[5px] size-[5px] rounded-full bg-signal" />}
                   </Button>
                 </Hint>
                 <InboxFilterMenu view={view} rows={all} engines={engines} workspaces={many ? list : []} />
