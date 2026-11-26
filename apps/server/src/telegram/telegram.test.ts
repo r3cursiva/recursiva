@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
 import { after, before, test } from "node:test";
 import { NOTIFY_DEFAULTS, type NotifyPrefs, type NotifySettingsView, type TelegramLink, type TelegramView } from "@rsva/protocol";
 import { ISSUE_KEY } from "@rsva/schema/models";
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "../db.ts";
+import { DiskBlobStore } from "../files/store.ts";
 import { follow as followAll } from "../notify/follow.ts";
 import { notifyFixture, quietAround, setPrefs } from "../notify/fixture.ts";
 import { sendTelegramDue } from "../notify/telegram.ts";
@@ -19,11 +24,11 @@ import { maskEmail } from "./message.ts";
 import { qrPath } from "./routes.ts";
 import { codeToTelegram, dropTelegramCode } from "./sign-in.ts";
 
-const { notifyOutbox, telegramChat, telegramCode, comment, member, loginFailure, loginCode, signInDevice } = schema;
+const { notifyOutbox, telegramChat, telegramCode, comment, member, loginFailure, loginCode, signInDevice, blob } = schema;
 const ORIGIN = "https://plan.example.test";
 const SECRET = webhookSecret("123:test");
 
-const { api, sent, deleted, answered, refusing } = fakeTelegram();
+const { api, sent, pictures, deleted, answered, refusing } = fakeTelegram();
 const mails: Mail[] = [];
 
 const { f, tx, newIssue, mentionedInThread } = notifyFixture();
@@ -371,6 +376,65 @@ test("a reply to a notification posts as the person's comment, in the thread it 
   const [c] = await db.select().from(comment).where(and(eq(comment.issueId, id), eq(comment.authorId, me.id)));
   assert.equal(c!.body, "Works for me, ship it");
   assert.equal(c!.parentId, root, "in the mention's thread");
+});
+
+test("a comment's pictures follow its message as a reply to it, and a reply to one posts a comment (RSVA-652)", async () => {
+  const { me, as, chatId } = await linked();
+  assert.equal((await setActions(as, true)).status, 204);
+  await setPrefs(me.id, { ...NOTIFY_DEFAULTS, seen: false, quiet: null });
+  const dir = await mkdtemp(join(tmpdir(), "rsva-tg-pictures-"));
+  const blobs = new DiskBlobStore(dir);
+  /** A file of the workspace; `stored` false leaves its row without its bytes. */
+  const file = async (text: string, mime: string, stored = true) => {
+    const bytes = Buffer.from(text);
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    if (stored) await blobs.put(f.ws.workspaceId, sha, Readable.from([bytes]), 1000);
+    await db.insert(blob).values({ workspaceId: f.ws.workspaceId, sha256: sha, size: bytes.length, mime }).onConflictDoNothing();
+    return `![image](/files/${f.ws.slug}/${sha})`;
+  };
+  /** A comment that mentions the person, and what the chat got about it. */
+  const mention = async (body: string) => {
+    const id = await newIssue(f.ws.ownerId);
+    await tx(f.ws.ownerId, [{ op: "create", m: "Comment", id: randomUUID(), set: { issueId: id, body: `Look [@x](mention:${me.id})\n\n${body}` } }]);
+    const now = new Date();
+    await follow(f.ws.workspaceId, now);
+    const before = pictures.length;
+    await sendTelegramDue(api, ORIGIN, new Date(now.getTime() + 11 * 60_000), f.ws.workspaceId, blobs);
+    const messageId = sent.findLastIndex((s) => s.chatId === chatId) + 1;
+    const [row] = await db.select().from(notifyOutbox).where(and(eq(notifyOutbox.userId, me.id), eq(notifyOutbox.issueId, id), eq(notifyOutbox.channel, "telegram")));
+    return { id, messageId, html: sent[messageId - 1]!.html, row: row!, albums: pictures.slice(before) };
+  };
+  try {
+    // Two photos, a GIF (not a photo to Telegram), a picture of another site, and the first photo again.
+    const [one, two, gif] = [await file("first", "image/png"), await file("second", "image/jpeg"), await file("moving", "image/gif")];
+    const both = await mention(`${one}\n\n${two}\n\n${gif}\n\n![chart](https://example.test/chart.png "A chart")\n\n${one}\n\nSee the second one.`);
+    assert.match(both.html, /<blockquote>Look @x\n\n\[5 images\]\n\nSee the second one\.<\/blockquote>/, "no Markdown of pictures in the quote");
+    assert.equal(both.albums.length, 1, "one album");
+    const [album] = both.albums;
+    assert.deepEqual([album!.chatId, album!.replyTo], [chatId, both.messageId], "under its message");
+    assert.deepEqual(album!.pictures.map((p) => [p.bytes.toString(), p.mime]), [["first", "image/png"], ["second", "image/jpeg"]], "the workspace's photos, each once, in order");
+    assert.deepEqual([both.row.status, both.row.mediaIds, both.row.error], ["sent", album!.ids, null]);
+
+    const answer = await say(chatId, "The second one is cut off", album!.ids[1]);
+    assert.match(answer.text!, new RegExp(`Posted to <code>${ISSUE_KEY}</code> as your comment`));
+    const [c] = await db.select().from(comment).where(and(eq(comment.issueId, both.id), eq(comment.authorId, me.id)));
+    assert.equal(c!.body, "The second one is cut off");
+
+    // A picture whose bytes are gone: the message went, and stays sent.
+    const lost = await mention(await file("lost", "image/png", false));
+    assert.match(lost.html, /<blockquote>Look @x\n\n\[image\]<\/blockquote>/);
+    assert.equal(lost.albums.length, 0);
+    assert.equal(lost.row.status, "sent");
+    assert.match(lost.row.error!, /^pictures: /);
+
+    // A short message quotes nothing and shows nothing.
+    await setPrefs(me.id, { ...NOTIFY_DEFAULTS, seen: false, quiet: null, telegram: { silent: true, length: "short" } });
+    const short = await mention(one);
+    assert.doesNotMatch(short.html, /blockquote/);
+    assert.equal(short.albums.length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("a message that is no reply, or a reply to something else, posts nothing and says how", async () => {

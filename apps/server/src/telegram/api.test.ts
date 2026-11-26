@@ -60,3 +60,31 @@ test("the bot's name is asked once; the webhook secret fits Telegram's alphabet"
   assert.equal(t.calls.length, 1);
   assert.match(webhookSecret("123:abc"), /^[A-Za-z0-9_-]{43}$/);
 });
+
+test("pictures go as an upload under their message, silently: one as a photo, more as an album (RSVA-652)", async () => {
+  const calls: { url: string; form: FormData }[] = [];
+  const answers: unknown[] = [{ message_id: 7 }, [{ message_id: 8 }, { message_id: 9 }]];
+  const api = telegramApi("123:abc", (async (url: string, init: RequestInit) => {
+    calls.push({ url, form: init.body as FormData });
+    return new Response(JSON.stringify({ ok: true, result: answers.shift() }));
+  }) as typeof fetch);
+  const png = { bytes: Buffer.from("png bytes"), mime: "image/png" };
+  const jpeg = { bytes: Buffer.from("jpeg bytes"), mime: "image/jpeg" };
+
+  assert.deepEqual(await api.sendPictures(42, [png], 5), [7]);
+  const one = calls[0]!;
+  assert.equal(one.url, "https://api.telegram.org/bot123:abc/sendPhoto");
+  assert.deepEqual([one.form.get("chat_id"), one.form.get("disable_notification")], ["42", "true"]);
+  assert.deepEqual(JSON.parse(one.form.get("reply_parameters") as string), { message_id: 5, allow_sending_without_reply: true });
+  const photo = one.form.get("photo") as File;
+  assert.deepEqual([photo.type, await photo.text()], ["image/png", "png bytes"]);
+
+  assert.deepEqual(await api.sendPictures(42, [png, jpeg], 5), [8, 9], "the ids in order");
+  const album = calls[1]!;
+  assert.equal(album.url, "https://api.telegram.org/bot123:abc/sendMediaGroup");
+  assert.deepEqual(JSON.parse(album.form.get("media") as string), [
+    { type: "photo", media: "attach://p0" },
+    { type: "photo", media: "attach://p1" },
+  ]);
+  assert.deepEqual([await (album.form.get("p0") as File).text(), (album.form.get("p1") as File).type], ["png bytes", "image/jpeg"]);
+});

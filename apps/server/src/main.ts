@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { TELEGRAM_COMMANDS } from "@rsva/protocol";
 import { buildApp } from "./app.ts";
 import { mailerFromEnv, PUBLIC_ORIGIN } from "./auth/mail.ts";
+import { blobStoreFromEnv } from "./files/store.ts";
 import { inboundFromEnv } from "./mail/inbound.ts";
 import { startNotifier } from "./notify/run.ts";
 import { sweepCodes } from "./auth/codes.ts";
@@ -48,12 +49,14 @@ const telegramLive = telegram && process.env.RSVA_NOTIFY === "on" ? telegram : n
 // Push (RSVA-647) the same way: a local run may take subscriptions and send a test, the notifier pushes only on the live one.
 const push = pushFromEnv();
 const pushLive = process.env.RSVA_NOTIFY === "on" ? push : null;
-const app = buildApp({ files, mailer, telegram, signInTelegram: telegramLive?.api ?? null, inbound, push });
+// One store for the routes and the notifier, which sends a comment's pictures to Telegram.
+const blobs = blobStoreFromEnv();
+const app = buildApp({ files, blobs, mailer, telegram, signInTelegram: telegramLive?.api ?? null, inbound, push });
 mailLog = (msg) => app.log.warn(msg);
 if (staticError) app.log.warn({ webDist }, "no web build, serving API only");
 else app.log.info({ files: files.size, webDist }, "static loaded");
 
-const stopNotifier = notify ? startNotifier(mailer, PUBLIC_ORIGIN ?? `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`, app.log, telegramLive?.api ?? null, inbound?.domain ?? null, pushLive) : async () => {};
+const stopNotifier = notify ? startNotifier(mailer, PUBLIC_ORIGIN ?? `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`, app.log, telegramLive?.api ?? null, inbound?.domain ?? null, pushLive, blobs) : async () => {};
 if (!notify) app.log.warn("notifications are not mailed: set RSVA_NOTIFY=on to mail them");
 
 // Telegram (PLNR-202) calls back the server that registered last, so only the live one does (and with its https origin):

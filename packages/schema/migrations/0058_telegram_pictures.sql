@@ -1,0 +1,1 @@
+ALTER TABLE "notify_outbox" ADD COLUMN "media_ids" bigint[];

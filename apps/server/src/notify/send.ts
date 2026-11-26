@@ -13,6 +13,7 @@ import { bundleMail, issueMail, type IssueNotice } from "../mail/emails.ts";
 import { replyAddress } from "../mail/inbound.ts";
 import { forPerson, unsubscribeLink } from "./unsubscribe.ts";
 import { prefsOf } from "./prefs.ts";
+import { withoutPictures } from "./words.ts";
 import { errorText } from "@rsva/schema/util";
 import { mayRead } from "@rsva/policy";
 
@@ -165,7 +166,12 @@ export async function seenInApp(r: Outbox): Promise<boolean> {
 /** A comment's Markdown with mentions as their names: `[@Ann](mention:<id>)` reads "@Ann". */
 
 /** What a notification says on any channel, whether its issue is urgent (it rings through quiet hours), and its project. */
-export type IssueFacts = Omit<IssueNotice, "unsubscribe" | "messageId" | "threadId"> & { urgent: boolean; projectId: string };
+export type IssueFacts = Omit<IssueNotice, "unsubscribe" | "messageId" | "threadId"> & {
+  urgent: boolean;
+  projectId: string;
+  /** The comment's pictures that are files of the workspace, by their SHA-256, in the comment's order (RSVA-652). */
+  pictures: string[];
+};
 
 /** What only a mail carries: the way out and the thread headers. */
 function mailExtras(r: Outbox, origin: string, unsubscribe: string): Pick<IssueNotice, "unsubscribe" | "messageId" | "threadId"> {
@@ -210,6 +216,9 @@ export async function issueFacts(r: Outbox, origin: string): Promise<IssueFacts 
   // A comment deleted before the mail went is not quoted, and the mail about it does not go.
   if (r.commentId && (!c || c.deletedAt)) return null;
   const key = issueKey(row.key, row.number);
+  const quoted = c && withoutPictures(plainMentions(c.body));
+  // The workspace's own files only, as the editor writes them: `/files/<slug>/<sha256>`, whatever origin stands before.
+  const file = new RegExp(`^(?:https?://[^/]+)?/files/${row.slug}/([0-9a-f]{64})(?:[?#]|$)`);
   return {
     to: row.email,
     kind: r.kind as IssueNotice["kind"],
@@ -218,7 +227,8 @@ export async function issueFacts(r: Outbox, origin: string): Promise<IssueFacts 
     issueKey: key,
     issueTitle: row.title,
     ...(state ? { stateName: state.name } : {}),
-    ...(c ? { comment: plainMentions(c.body) } : {}),
+    ...(quoted ? { comment: quoted.text } : {}),
+    pictures: (quoted?.pictures ?? []).flatMap((address) => file.exec(address)?.[1] ?? []),
     workspace: row.workspace,
     link: `${origin}${issuePath(row.slug, key)}`,
     settings: `${origin}${settingsPath(row.slug, "notifications")}`,
