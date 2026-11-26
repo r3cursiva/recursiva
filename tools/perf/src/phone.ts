@@ -381,6 +381,26 @@ async function flow(p: Page, ctx: BrowserContext): Promise<number> {
   await p.mouse.click(195, 60);
   await p.waitForTimeout(400);
 
+  // 3c. an archived project's menu restores it, and has nothing about the sidebar it is not in
+  const projectMenu = async () => {
+    await tap(p, 'header button[aria-label$=" options"]');
+    await p.waitForTimeout(450);
+  };
+  const item = (text: string) => p.locator(`[role=menuitem]:has-text("${text}")`).count();
+  await projectMenu();
+  await tap(p, '[role=menuitem]:has-text("Archive project")');
+  await p.waitForTimeout(500);
+  await projectMenu();
+  await shot("project-menu-archived");
+  ok("archived project: Restore, no Archive", (await item("Restore project")) === 1 && (await item("Archive project")) === 0);
+  ok("archived project: nothing about the sidebar", (await item("Hide from sidebar")) + (await item("Move to group")) === 0);
+  await tap(p, '[role=menuitem]:has-text("Restore project")');
+  await p.waitForTimeout(500);
+  await projectMenu();
+  ok("restored project: Archive again", (await item("Archive project")) === 1);
+  await p.mouse.click(195, 60);
+  await p.waitForTimeout(400);
+
   // 4. inbox: a row's "…" archives with undo, marks read and back
   await go(`/${WS}/inbox`);
   const more = () => p.locator('button[aria-label="More actions"]').first().tap();
@@ -395,6 +415,15 @@ async function flow(p: Page, ctx: BrowserContext): Promise<number> {
   await p.locator('button:has-text("Undo")').tap();
   await p.waitForTimeout(400);
   const dots = () => p.locator('[aria-label="Unread"]').count();
+  // The dot on Unread only is there while something is unread, and gone with all read.
+  const trayDot = () => p.locator('button[aria-label="Unread only"] [data-unread-dot]').count();
+  ok("unread: a dot on Unread only", (await trayDot()) === 1);
+  await tap(p, 'button[aria-label="Inbox actions"]');
+  await tap(p, '[role=menuitem]:has-text("Mark all as read")');
+  await p.waitForTimeout(400);
+  ok("all read: no dot on Unread only", (await trayDot()) === 0);
+  await p.locator('button:has-text("Undo")').tap();
+  await p.waitForTimeout(400);
   const before = await dots();
   await more();
   await tap(p, '[role=menuitem]:has-text("Mark as")');
