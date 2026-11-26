@@ -299,11 +299,14 @@
 }
 /* Rich text: descriptions and comments, read and edited (packages/editor content.css reads --rich-*). A component names
    the role of its text; the numbers are here. The root holds an edited description and the composer: on a phone 16px,
-   under which iOS zooms into the field. --rich-gap is the space between paragraphs, list items' blocks and quotes. */
+   under which iOS zooms into the field. --rich-gap is the space between paragraphs, list items' blocks and quotes;
+   --rich-image is the tallest a picture is drawn in the text: a preview in a comment and the composer, more in a
+   description, which is a document. */
 :root {
     --rich-size: 13.5px;
     --rich-leading: 1.55;
     --rich-gap: 8px;
+    --rich-image: 320px;
     @variant max-md {
         --rich-size: 16px;
         --rich-leading: 1.5;
@@ -311,12 +314,14 @@
 }
 /* The description on the issue's page and panel. */
 @utility rich-description {
+    --rich-image: 480px;
     @variant max-md {
         --rich-size: 15px;
     }
 }
 /* The description in the new-issue dialog. */
 @utility rich-new-description {
+    --rich-image: 480px;
     @variant md {
         --rich-size: 14px;
         --rich-leading: 1.6;

@@ -1,5 +1,5 @@
 // Everything that floats over the screens: the row popup (pickers and menu), the create modal, the command palette, New
-// project, the card of an issue key under the pointer and short confirmations. The first five live in one lazy chunk (edit-chunk.ts),
+// project, the card of an issue key under the pointer, a picture opened from text and short confirmations. The first five live in one lazy chunk (edit-chunk.ts),
 // prefetched once the list has painted, so their Base UI code stays out of the startup JS and the first open does not
 // wait for the network.
 import type { Issue } from "@rsva/schema/models";
@@ -15,6 +15,7 @@ import { store } from "../store.ts";
 import { createIssue } from "./create-state.ts";
 import { openIssue } from "./issue-actions.ts";
 import { issueRefHover, watchIssueRefs } from "./issue-ref.ts";
+import { imageView, watchImages } from "./image-view.ts";
 import { notice } from "./notice.ts";
 import { newProject, palette, shortcutSheet } from "./palette-state.ts";
 import { watchLongPress } from "./row-menu.tsx";
@@ -29,6 +30,7 @@ const CommandPalette = chunk("CommandPalette");
 const NewProjectDialog = chunk("NewProjectDialog");
 const ShortcutSheet = chunk("ShortcutSheet");
 const IssueRefCard = chunk("IssueRefCard");
+const ImageViewerHost = chunk("ImageViewerHost");
 const ViewPanel = chunk("ViewPanel");
 const BulkBar = chunk("BulkBar");
 /** The screens with a list or board of issues to mark in. */
@@ -40,6 +42,7 @@ export const Overlays = observer(function Overlays() {
     if (ready) afterPaint(() => void loadEditChunk());
   }, [ready]);
   useEffect(watchIssueRefs, []);
+  useEffect(watchImages, []);
   useEffect(watchLongPress, []);
   // Marks belong to the list they were made in: leaving the lists drops them (PLNR-294). While some are marked, every
   // row shows its box and a phone's corner button gives way to the bar ([data-marking] on the root).
@@ -67,6 +70,7 @@ export const Overlays = observer(function Overlays() {
       {newProject.open && <NewProjectDialog />}
       {shortcutSheet.open && <ShortcutSheet />}
       {issueRefHover.current && <IssueRefCard />}
+      {imageView.current && <ImageViewerHost />}
       {(viewPanel.open || viewPanel.leaving) && <ViewPanel key={viewPanel.run} />}
       {listView.marked.size > 0 && <BulkBar />}
       {notice.text && (
