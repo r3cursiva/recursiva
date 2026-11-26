@@ -1,4 +1,5 @@
-// An element that takes dropped files: an issue's attachments (files.tsx) and the profile's picture (account-picture.tsx);
+// An element that takes dropped files: an issue's attachments (files.tsx), the profile's picture (account-picture.tsx) and
+// the comment composer around its editor (rich-editors.tsx);
 // and the page's guard (guardFileDrops), which keeps a file dropped anywhere else from opening in the browser.
 import { useState, type DragEvent } from "react";
 import { carriesFiles, droppableFiles, PAGE_DRAG } from "@rsva/editor/drag";
@@ -26,6 +27,9 @@ export function guardFileDrops(): void {
   }
 }
 
+/** Whether a drop target takes a drop: files from outside the page that a target inside it (an editor) did not take already. */
+export const takesDrop = (types: readonly string[], taken: boolean): boolean => !taken && droppableFiles(types);
+
 /** `over` while files are dragged over the element; spread `drop` on it. `alt`: Alt was held at the drop. */
 export function useFileDrop(onFiles: (files: File[], alt: boolean) => void) {
   const [over, setOver] = useState(false);
@@ -35,9 +39,9 @@ export function useFileDrop(onFiles: (files: File[], alt: boolean) => void) {
       onDragOver: (e: DragEvent) => hasFiles(e) && (e.preventDefault(), setOver(true)),
       onDragLeave: (e: DragEvent) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setOver(false),
       onDrop: (e: DragEvent) => {
-        if (!hasFiles(e)) return;
-        e.preventDefault();
         setOver(false);
+        if (!takesDrop(e.dataTransfer.types, e.defaultPrevented)) return;
+        e.preventDefault();
         onFiles([...e.dataTransfer.files], e.altKey);
       },
     },

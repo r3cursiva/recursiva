@@ -29,6 +29,7 @@ import { mentionCandidates } from "@rsva/display/mention";
 import { copyIssueLink } from "./issue-actions.ts";
 import { face } from "../lib/face.ts";
 import { useFilePicker } from "./file-picker.tsx";
+import { useFileDrop } from "./file-drop.ts";
 
 /**
  * Who "@" offers: the workspace's members but guests, read when the menu opens, so a member who joins shows at once. A name that
@@ -263,7 +264,11 @@ function ComposerTools({ tools, lit, handle, onAttach }: { tools: readonly Tool[
   );
 }
 
-/** The composer's box: the editor and the send row; on a phone `above` over them, `attach` before the field. */
+/**
+ * The composer's box: the editor and the send row; on a phone `above` over them, `attach` before the field. `drop` makes
+ * the whole box take files: an empty editor is one line tall, and a file dropped under that line, on the box's padding or
+ * on the send row did nothing (the page's guard refused it).
+ */
 function ComposerFrame({
   submitLabel,
   canSubmit,
@@ -273,6 +278,7 @@ function ComposerFrame({
   attach,
   tools,
   hint,
+  drop,
   children,
 }: {
   submitLabel: string;
@@ -283,10 +289,11 @@ function ComposerFrame({
   attach: ReactNode;
   tools: ReactNode;
   hint: string | undefined;
+  drop: ReturnType<typeof useFileDrop> | undefined;
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-(--float-radius) border border-control-border bg-field transition-[border-color,box-shadow] duration-120 focus-within:border-ink-3 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-ink)_7%,transparent)] max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:shadow-none! max-md:focus-within:border-0" data-composer="">
+    <div {...drop?.drop} className={cn("rounded-(--float-radius) border border-control-border bg-field transition-[border-color,box-shadow] duration-120 focus-within:border-ink-3 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-ink)_7%,transparent)] max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:shadow-none! max-md:focus-within:border-0", drop?.over && "outline-2 outline-offset-2 outline-signal outline-dashed")} data-composer="">
       <div className="md:hidden">{above}</div>
       <div className="max-md:flex max-md:items-end max-md:gap-1.5">
         {attach}
@@ -345,7 +352,9 @@ export function Composer({
   tools?: Tools;
 }) {
   const handle = useRef<EditorHandle | null>(null);
-  const picker = useFilePicker((files) => handle.current?.addFiles(files));
+  const addFiles = (files: File[]) => handle.current?.addFiles(files);
+  const picker = useFilePicker(addFiles);
+  const drop = useFileDrop(addFiles);
   const phone = useIsPhone();
   // On a phone the matches of "@", "#" and "/" are chips over the field: a popup at the caret would land under the finger.
   const [chips, setChips] = useState<HTMLElement | null>(null);
@@ -391,6 +400,7 @@ export function Composer({
       onSubmit={submit}
       onCancel={onCancel}
       hint={tools === "reply" ? "Esc to cancel" : tools === "edit" ? `Esc · ${keys("mod", "↵")}` : undefined}
+      drop={issue ? drop : undefined}
       tools={!phone && <ComposerTools tools={TOOLS[tools]} lit={lit} handle={handle} {...(issue ? { onAttach: picker.pick } : {})} />}
       above={
         <>

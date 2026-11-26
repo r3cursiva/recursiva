@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PAGE_DRAG, droppableFiles } from "@rsva/editor/drag";
-import { strayFiles } from "./file-drop.ts";
+import { strayFiles, takesDrop } from "./file-drop.ts";
 
 test("a file drag no drop target took is cancelled", () => {
   assert.equal(strayFiles(["Files"], false), true);
@@ -22,4 +22,11 @@ test("a drop target takes files from outside the page, not an image dragged from
   assert.equal(droppableFiles(["text/plain"]), false);
   // The guard still cancels the page's own image when nothing took it: the browser would open it.
   assert.equal(strayFiles(["text/html", PAGE_DRAG, "Files"], false), true);
+});
+
+test("a drop target leaves a drop to the editor inside it that took it", () => {
+  assert.equal(takesDrop(["Files"], false), true);
+  // The composer around its editor: the editor uploaded the files, a second take would upload them again.
+  assert.equal(takesDrop(["Files"], true), false);
+  assert.equal(takesDrop(["text/html", PAGE_DRAG, "Files"], false), false);
 });
