@@ -50,6 +50,7 @@ export { Inbox } from "./inbox.tsx";
 export { Decisions } from "./decisions.tsx";
 // The card of an issue key under the pointer (PLNR-43).
 export { IssueRefCard } from "./issue-ref-card.tsx";
+export { ImageViewerHost } from "./image-viewer-host.tsx";
 export { MoreMenu } from "./more-menu.tsx";
 export { MyWork } from "./my-work.tsx";
 // Saved views (PLNR-74): the View panel, the Display popover, the menu, the actions behind the tab row's keys, the views

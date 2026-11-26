@@ -130,16 +130,20 @@
 }
 .rich-text .file-card span:first-of-type { overflow: hidden; font-size: 12.5px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .rich-text .file-card span:last-of-type { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; line-height: 1.3; color: var(--ql-ink-3); }
-/* An image (PLNR-50): a block of its own, never wider than the text, at most a screen tall. */
+/* An image (PLNR-50): a block of its own, never wider than the text and no taller than its role allows (--rich-image:
+   a preview in a comment, more in a description), keeping its proportions; a small one stays its size. The whole of it
+   opens in the viewer (apps/web image-view.ts): on a click where the text is read, on a double click where it is edited. */
 .rich-text img {
   display: block;
   max-width: 100%;
-  max-height: 80vh;
+  max-height: min(var(--rich-image, 480px), 80vh);
+  width: auto;
   height: auto;
   margin: 0.5rem 0;
   border-radius: 6px;
   border: 1px solid var(--border);
 }
+.rich-text:not(.ProseMirror) img { cursor: zoom-in; }
 .rich-text.ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--ring); outline-offset: 2px; }
 /* Where a dropped or pasted file will go while it uploads (view/upload.ts). */
 .rich-text .upload-placeholder {
