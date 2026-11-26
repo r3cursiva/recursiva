@@ -631,6 +631,32 @@ test("issue keys in the editor: a plain click opens the issue where the app can,
   assert.deepEqual([tabs, opened.length], [["/atlas/browse/PLNR-27"], 1], "⌘-click opens a new tab, not in place");
 });
 
+test("links in the editor: a click opens a new tab, with ⌘ or without; Shift- and Alt-click and a click beside do not", () => {
+  const { document } = parseHTML(`<!doctype html><html><body><p>See <a href="https://x.dev/docs"><b>the docs</b></a> and <span class="issue-ref" data-issue="PLNR-27">PLNR-27</span></p></body></html>`);
+  const onLink = document.querySelector("b");
+  const tabs: string[] = [];
+  const click = (target: unknown, mods: Partial<MouseEvent> = {}) => {
+    const v = fakeView("See [the docs](https://x.dev/docs) and PLNR-27");
+    const p = v.state.plugins.find((x) => x.props.handleClick)!;
+    const was = globalThis.window;
+    globalThis.window = { open: (u: string) => tabs.push(u) } as never;
+    try {
+      return p.props.handleClick!.call(p, v as never, 6, { button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, target, ...mods } as MouseEvent);
+    } finally {
+      globalThis.window = was;
+    }
+  };
+  assert.equal(click(onLink), true, "a plain click");
+  assert.equal(click(onLink, { metaKey: true }), true, "⌘-click");
+  assert.deepEqual(tabs, ["https://x.dev/docs", "https://x.dev/docs"]);
+  assert.equal(click(onLink, { shiftKey: true }), false, "Shift-click extends the selection");
+  assert.equal(click(onLink, { altKey: true }), false);
+  assert.equal(click(onLink, { button: 1 }), false, "the middle button is the browser's");
+  assert.equal(click(document.querySelector("p")), false, "a click beside the link places the caret");
+  assert.equal(click(document.querySelector(".issue-ref")), false, "an issue key is not this rule's");
+  assert.equal(tabs.length, 2);
+});
+
 // ── Tables (PLNR-367) ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /** A view whose caret is in the table's cell at (row, col), with the view's line test answering yes. */

@@ -213,14 +213,19 @@ const paste = new Plugin({
   },
 });
 
-/** ⌘/Ctrl-click opens a link in a new tab (a plain click places the caret, as in Linear). */
+/**
+ * A click on a link opens it in a new tab, with ⌘/Ctrl or without: it looks like a link, so it acts as one, as an issue
+ * key does (issue-ref.ts). Shift- and Alt-click keep selecting, a drag over it selects (ProseMirror calls handleClick
+ * only for a click that did not move), arrow keys walk into its text, and the toolbar's Link changes its address. The
+ * link under the pointer, not the one at the caret: a click just past a link puts the caret at its end.
+ */
 const linkClick = new Plugin({
   props: {
-    handleClick(view, pos, e) {
-      if (!(e.metaKey || e.ctrlKey)) return false;
-      const link = view.state.doc.resolve(pos).marks().find((m) => m.type === M.link);
-      if (!link) return false;
-      window.open(link.attrs.href as string, "_blank", "noopener,noreferrer");
+    handleClick(_view, _pos, e) {
+      if (e.button !== 0 || e.shiftKey || e.altKey) return false;
+      const href = (e.target as Element | null)?.closest?.("a[href]:not(.issue-ref)")?.getAttribute("href");
+      if (!href) return false;
+      window.open(href, "_blank", "noopener,noreferrer");
       return true;
     },
   },
