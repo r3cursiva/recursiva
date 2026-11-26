@@ -6,6 +6,24 @@ import type { DigestItem, IssueNotice } from "../mail/emails.ts";
 /** A comment's first lines: enough to answer from the mail's preview, the rest is a click away. */
 const COMMENT_MAX = 600;
 
+/** A picture in Markdown, `![alt](address)` or `![alt](address "title")`: its address. */
+const PICTURE = /!\[[^\]]*\]\(\s*([^)\s]*)[^)]*\)/g;
+const PICTURES = new RegExp(`(?:${PICTURE.source}\\s*)+`, "g");
+
+/**
+ * A comment's Markdown as a notification quotes it, `[image]` or `[3 images]` where pictures stood, and the addresses of
+ * those pictures in their order: a channel that shows pictures sends them, the others have said there are some.
+ */
+export function withoutPictures(md: string): { text: string; pictures: string[] } {
+  const pictures: string[] = [];
+  const text = md.replace(PICTURES, (run) => {
+    const found = [...run.matchAll(PICTURE)].map((m) => m[1]!);
+    pictures.push(...found);
+    return `${found.length === 1 ? "[image]" : `[${found.length} images]`}${/\s*$/.exec(run)![0]}`;
+  });
+  return { text: text.trim(), pictures };
+}
+
 /** An issue's or a cycle's title as notifications quote it. */
 export const TITLE_CLIP = 200;
 

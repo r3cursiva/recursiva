@@ -59,6 +59,16 @@ export interface SendOptions {
   buttons?: Buttons;
 }
 
+/** A picture to upload: its bytes and the image type they are. */
+export interface Picture {
+  bytes: Buffer;
+  mime: string;
+}
+
+/** The largest photo the Bot API takes (sendPhoto), and the most pictures of one album (sendMediaGroup). */
+export const PHOTO_MAX = 10 * 2 ** 20;
+export const ALBUM_MAX = 10;
+
 /** The most the Bot API lets a bot download (getFile). */
 export const DOWNLOAD_MAX = 20 * 2 ** 20;
 
@@ -68,6 +78,11 @@ export interface TelegramApi {
   username(): Promise<string>;
   /** Sends a message; its id in the chat, which a reply to it carries. */
   send(chatId: number, html: string, opts?: SendOptions): Promise<number>;
+  /**
+   * Sends pictures as a reply to the bot's message `replyTo`, without a sound: one as a photo, more (ALBUM_MAX at most)
+   * as an album. Their ids in the chat, in order.
+   */
+  sendPictures(chatId: number, pictures: Picture[], replyTo: number): Promise<number[]>;
   /** Answers a pressed button: Telegram shows `text`, if any, for a moment, and stops the button's spinner. */
   answerButton(callbackId: string, text?: string): Promise<void>;
   /** The bytes of a file someone sent the bot (a photo, a document), DOWNLOAD_MAX at most. */
@@ -95,12 +110,13 @@ const FAILED_MS = 60_000;
 export const webhookSecret = (token: string): string => createHmac("sha256", token).update("rsva telegram webhook").digest("base64url");
 
 export function telegramApi(token: string, fetchFn: typeof fetch = fetch): TelegramApi {
-  async function method<T>(name: string, body: Record<string, unknown>): Promise<T> {
+  /** A form is an upload (multipart/form-data, which fetch writes itself) and gets the time a download does. */
+  async function method<T>(name: string, body: Record<string, unknown> | FormData): Promise<T> {
+    const upload = body instanceof FormData;
     const res = await fetchFn(`${API}/bot${token}/${name}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      ...(upload ? { body } : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(upload ? TIMEOUT_MS * 6 : TIMEOUT_MS),
     });
     const data = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: T; error_code?: number; description?: string; parameters?: ResponseParameters };
     if (!data.ok) throw new TelegramError(data.error_code ?? res.status, data.description ?? `HTTP ${res.status}`, data.parameters);
@@ -122,6 +138,21 @@ export function telegramApi(token: string, fetchFn: typeof fetch = fetch): Teleg
     async send(chatId, html, opts = {}) {
       const sent = await method<{ message_id: number }>("sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", link_preview_options: { is_disabled: true }, disable_notification: !!opts.silent, ...(opts.protect ? { protect_content: true } : {}), ...(opts.buttons?.length ? { reply_markup: replyMarkup(opts.buttons) } : {}) });
       return sent.message_id;
+    },
+    async sendPictures(chatId, pictures, replyTo) {
+      const form = new FormData();
+      form.set("chat_id", String(chatId));
+      form.set("disable_notification", "true");
+      // The message deleted meanwhile: the pictures still go, on their own.
+      form.set("reply_parameters", JSON.stringify({ message_id: replyTo, allow_sending_without_reply: true }));
+      const file = (p: Picture) => new Blob([new Uint8Array(p.bytes)], { type: p.mime });
+      if (pictures.length === 1) {
+        form.set("photo", file(pictures[0]!), "picture");
+        return [(await method<{ message_id: number }>("sendPhoto", form)).message_id];
+      }
+      pictures.forEach((p, i) => form.set(`p${i}`, file(p), `p${i}`));
+      form.set("media", JSON.stringify(pictures.map((_, i) => ({ type: "photo", media: `attach://p${i}` }))));
+      return (await method<{ message_id: number }[]>("sendMediaGroup", form)).map((m) => m.message_id);
     },
     async answerButton(callbackId, text) {
       await method("answerCallbackQuery", { callback_query_id: callbackId, ...(text ? { text } : {}) });

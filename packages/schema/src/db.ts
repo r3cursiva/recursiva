@@ -827,6 +827,8 @@ export const notifyOutbox = pgTable(
      */
     chatId: bigint({ mode: "number" }),
     messageId: bigint({ mode: "number" }),
+    /** The comment's pictures sent after that message, by their ids in the chat (RSVA-652): a reply to one is a reply to it. */
+    mediaIds: bigint({ mode: "number" }).array(),
     /** The group chat a "group" row goes to (PLNR-204); null for the person's own channels. */
     groupId: uuid().references(() => telegramGroup.id, { onDelete: "cascade" }),
     /** An email sent instead of a Telegram message, because the person's chat stopped taking them (PLNR-204). */

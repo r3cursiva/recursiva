@@ -11,6 +11,7 @@ import { sendGroupCycles, sendMornings } from "./morning.ts";
 import { sendDue } from "./send.ts";
 import { sendPushDue } from "./push.ts";
 import { sendGroupsDue, sendTelegramDue } from "./telegram.ts";
+import type { BlobStore } from "../files/store.ts";
 import type { TelegramApi } from "../telegram/api.ts";
 import type { PushApi } from "./web-push.ts";
 
@@ -26,7 +27,7 @@ export function notifyChanged(): void {
 }
 
 /** One pass: every workspace's new actions classified, then everything due sent. */
-async function notifyPass(mailer: Mailer, origin: string, log: Log, tg: TelegramApi | null, replyDomain: string | null, push: PushApi | null): Promise<void> {
+async function notifyPass(mailer: Mailer, origin: string, log: Log, tg: TelegramApi | null, replyDomain: string | null, push: PushApi | null, blobs: BlobStore | null): Promise<void> {
   // One workspace that fails (its cursor stays, the next pass tries again) does not stop the others or the sending.
   for (const ws of await behind()) {
     try {
@@ -37,7 +38,7 @@ async function notifyPass(mailer: Mailer, origin: string, log: Log, tg: Telegram
   }
   while ((await sendDue(mailer, origin, new Date(), null, replyDomain)) > 0);
   if (tg) {
-    while ((await sendTelegramDue(tg, origin, new Date(), null)) > 0);
+    while ((await sendTelegramDue(tg, origin, new Date(), null, blobs)) > 0);
     while ((await sendGroupsDue(tg, origin, new Date(), null)) > 0);
   }
   if (push) while ((await sendPushDue(push, origin, new Date(), null)) > 0);
@@ -54,7 +55,7 @@ type Log = { error: (e: unknown, msg: string) => void };
  * Starts the loop; the function it returns stops it and resolves once a pass under way has finished. With `replyDomain`
  * (the server takes replies, mail/inbound.ts) a single notification email gets its own reply address.
  */
-export function startNotifier(mailer: Mailer, origin: string, log: Log, tg: TelegramApi | null = null, replyDomain: string | null = null, push: PushApi | null = null): () => Promise<void> {
+export function startNotifier(mailer: Mailer, origin: string, log: Log, tg: TelegramApi | null = null, replyDomain: string | null = null, push: PushApi | null = null, blobs: BlobStore | null = null): () => Promise<void> {
   let running: Promise<void> | null = null;
   let again = false;
   let soon: ReturnType<typeof setTimeout> | undefined;
@@ -62,7 +63,7 @@ export function startNotifier(mailer: Mailer, origin: string, log: Log, tg: Tele
   const run = (): void => {
     if (stopped) return;
     if (running) return void (again = true);
-    running = notifyPass(mailer, origin, log, tg, replyDomain, push)
+    running = notifyPass(mailer, origin, log, tg, replyDomain, push, blobs)
       .catch((e: unknown) => log.error(e, "notifier pass failed"))
       .finally(() => {
         running = null;

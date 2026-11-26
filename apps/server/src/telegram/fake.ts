@@ -1,9 +1,12 @@
 // Telegram as the tests answer it (PLNR-202, PLNR-204, PLNR-205): what was sent, deleted and left, the buttons answered,
 // the files a test put up for download, and a refusal when a test sets one. No test reaches the network.
-import type { SendOptions, TelegramApi, TelegramError } from "./api.ts";
+import type { Picture, SendOptions, TelegramApi, TelegramError } from "./api.ts";
 
 export function fakeTelegram() {
   const sent: { chatId: number; html: string; opts: SendOptions }[] = [];
+  /** The pictures sent, each call with the ids it answered: numbered from 10 001, apart from the messages'. */
+  const pictures: { chatId: number; pictures: Picture[]; replyTo: number; ids: number[] }[] = [];
+  let pictureIds = 10_000;
   const deleted: { chatId: number; messageId: number }[] = [];
   const left: number[] = [];
   const answered: { callbackId: string; text?: string }[] = [];
@@ -23,6 +26,12 @@ export function fakeTelegram() {
       // The message's id in its chat, as Telegram numbers them: here, its place in the list.
       return sent.length;
     },
+    sendPictures: async (chatId, list, replyTo) => {
+      if (refusal.error) throw refusal.error;
+      const ids = list.map(() => ++pictureIds);
+      pictures.push({ chatId, pictures: list, replyTo, ids });
+      return ids;
+    },
     answerButton: async (callbackId, text) => void answered.push({ callbackId, ...(text ? { text } : {}) }),
     download: async (fileId) => files.get(fileId) ?? Promise.reject(new Error(`no file ${fileId}`)),
     setCommands: async () => {},
@@ -40,5 +49,5 @@ export function fakeTelegram() {
       refusal.error = null;
     }
   }
-  return { api, sent, deleted, left, answered, files, refusing };
+  return { api, sent, pictures, deleted, left, answered, files, refusing };
 }

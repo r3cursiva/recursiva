@@ -5,7 +5,7 @@
 // Who replies is proven by Telegram: the webhook is authenticated (routes.ts), and a chat is the person's only after
 // they pressed Start on their own link. The answer to the reply rides on the webhook's response, as /start's does.
 import { ISSUE_KEY, UUID_PATTERN } from "@rsva/schema/models";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db, schema } from "../db.ts";
 import { html } from "../mail/template.ts";
 import { postReply } from "../notify/reply.ts";
@@ -45,12 +45,12 @@ export async function aboutIssue(chatId: number, to: RepliedTo | undefined): Pro
   if (!to) return null;
   const chats = await db.select({ userId: telegramChat.userId }).from(telegramChat).where(eq(telegramChat.chatId, chatId));
   if (!chats.length) return null;
-  // A message id is unique in its chat: the row sent to this chat with that id, and to a person this chat is still linked
+  // A message id is unique in its chat: the row sent to this chat with that id, or with it among its pictures, and to a person this chat is still linked
   // to (one who moved to another chat or disconnected no longer comments from here).
   const [row] = await db
     .select()
     .from(notifyOutbox)
-    .where(and(eq(notifyOutbox.channel, "telegram"), eq(notifyOutbox.chatId, chatId), eq(notifyOutbox.messageId, to.message_id), inArray(notifyOutbox.userId, chats.map((c) => c.userId))))
+    .where(and(eq(notifyOutbox.channel, "telegram"), eq(notifyOutbox.chatId, chatId), or(eq(notifyOutbox.messageId, to.message_id), sql`${to.message_id} = any(${notifyOutbox.mediaIds})`), inArray(notifyOutbox.userId, chats.map((c) => c.userId))))
     .limit(1);
   if (row) return { row };
   if (!to.from?.is_bot) return null;

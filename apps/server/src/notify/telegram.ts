@@ -10,6 +10,10 @@
 //
 // A chat with notifications only (RSVA-496) gets Open alone under each message, as a group does.
 //
+// A comment's pictures (RSVA-652) follow its message in the personal chat, as a reply to it: files are open to members
+// only, so the bot uploads their bytes. They go after the row is done and never undo it: a picture Telegram does not take
+// leaves the message with its "[image]" and the reason on the row.
+//
 // Group chats' rows ("group", PLNR-204) go to their group, checked again against what it takes now and against what its
 // linker may read. A group that refuses (the bot removed) is marked and gets nothing more; one that became a supergroup
 // is followed to its new id.
@@ -18,9 +22,11 @@
 // The refusing chat's rows wait the `retry_after` it named, without spending a try, and the rest of its rows in the run are
 // not sent to it. The Bot API's 30 a second across all chats is not counted here: rows go one at a time, 50 per run.
 import { afterQuiet } from "@rsva/protocol";
-import { inArray } from "drizzle-orm";
+import { errorText } from "@rsva/schema/util";
+import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db.ts";
-import { TelegramError, type TelegramApi } from "../telegram/api.ts";
+import type { BlobStore } from "../files/store.ts";
+import { ALBUM_MAX, PHOTO_MAX, TelegramError, type TelegramApi } from "../telegram/api.ts";
 import { chatFailed } from "../telegram/chats.ts";
 import { groupFailed, sendToGroup } from "../telegram/groups.ts";
 import { muteRunning } from "../telegram/mute.ts";
@@ -29,7 +35,30 @@ import { groupMessage, telegramMessage, type GroupKind } from "../telegram/messa
 import { prefsOf } from "./prefs.ts";
 import { failed, finish, issueFacts, putBack, stillDue, STALE_MS, take, type Outbox } from "./send.ts";
 
-const { telegramChat, telegramGroup, notifyOutbox } = schema;
+const { telegramChat, telegramGroup, notifyOutbox, blob } = schema;
+
+/** What Telegram shows as a photo; anything else (a GIF, an AVIF) stays the message's "[image]". */
+const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+/**
+ * The pictures of the comment a sent message quotes, as a reply to it: the workspace's own files among `hashes`, in
+ * their order, each once, ALBUM_MAX at most. Their ids are kept on the row, so a reply to a picture finds the issue as a
+ * reply to the message does; a failure is kept there as well, and the row stays sent.
+ */
+async function sendPictures(api: TelegramApi, blobs: BlobStore, r: Outbox, chatId: number, messageId: number, hashes: string[]): Promise<void> {
+  try {
+    const rows = await db.select({ sha256: blob.sha256, size: blob.size, mime: blob.mime }).from(blob).where(and(eq(blob.workspaceId, r.workspaceId), inArray(blob.sha256, hashes)));
+    const known = new Map(rows.filter((b) => PHOTO_TYPES.includes(b.mime) && b.size <= PHOTO_MAX).map((b) => [b.sha256, b]));
+    const pictures = [];
+    for (const sha of [...new Set(hashes)].filter((h) => known.has(h)).slice(0, ALBUM_MAX))
+      pictures.push({ bytes: Buffer.concat(await blobs.get(r.workspaceId, sha).toArray()), mime: known.get(sha)!.mime });
+    if (!pictures.length) return;
+    const mediaIds = await api.sendPictures(chatId, pictures, messageId);
+    await db.update(notifyOutbox).set({ mediaIds }).where(eq(notifyOutbox.id, r.id));
+  } catch (e) {
+    await db.update(notifyOutbox).set({ error: `pictures: ${errorText(e)}`.slice(0, 500) }).where(eq(notifyOutbox.id, r.id));
+  }
+}
 
 /** The row again as an email, due now: send.ts mails it while the Telegram cell is Instantly. */
 async function byEmail(r: Outbox, now: Date): Promise<void> {
@@ -63,9 +92,10 @@ function rateLimits(now: Date) {
 
 /**
  * Sends what is due; returns how many rows it handled, sent or not. `workspaceId` is one workspace's rows only (a test's);
- * `null` is every workspace, which only the server's loop wants.
+ * `null` is every workspace, which only the server's loop wants. `blobs` is where the files are: without it (a test with
+ * no files) a comment's pictures are not sent.
  */
-export async function sendTelegramDue(api: TelegramApi, origin: string, now = new Date(), workspaceId: string | null): Promise<number> {
+export async function sendTelegramDue(api: TelegramApi, origin: string, now = new Date(), workspaceId: string | null, blobs: BlobStore | null = null): Promise<number> {
   const rows = await take(now, "telegram", workspaceId);
   if (!rows.length) return 0;
   const people = [...new Set(rows.map((r) => r.userId))];
@@ -98,6 +128,8 @@ export async function sendTelegramDue(api: TelegramApi, origin: string, now = ne
       const inQuiet = afterQuiet(now, p.quiet, timeZone).getTime() > now.getTime();
       const messageId = await api.send(chat.chatId, telegramMessage(facts, p.telegram.length), { silent: inQuiet && !(facts.urgent && p.urgent), buttons: noticeButtons(facts.link, chat.actions ? r.issueId : null) });
       await finish(r.id, "sent", { sent: { chatId: chat.chatId, messageId } });
+      // With the comment only: a short message quotes nothing, so it shows nothing of it either.
+      if (blobs && p.telegram.length === "full" && facts.pictures.length) await sendPictures(api, blobs, r, chat.chatId, messageId, facts.pictures);
     } catch (e) {
       if (e instanceof TelegramError && e.permanent) {
         refused.add(r.userId);
