@@ -355,7 +355,8 @@ function historyRequests(page: Page): Promise<number> {
 async function openIssuePage(ctx: BrowserContext, key: string, text: string): Promise<IssueOpen> {
   const { page } = await throttled(ctx);
   await page.goto(`${ORIGIN}/${WS}/browse/${key}`, { waitUntil: "commit" });
-  const h = await page.waitForFunction((t) => document.body.textContent!.includes(t) && performance.now(), text, { timeout: 10_000, polling: "raf" });
+  // The navigation has only committed: the first frames can come before the parser has made <body>.
+  const h = await page.waitForFunction((t) => document.body?.textContent?.includes(t) && performance.now(), text, { timeout: 10_000, polling: "raf" });
   const ms = (await h.jsonValue()) as number;
   const requests = await historyRequests(page);
   await page.close();
