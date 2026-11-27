@@ -10,7 +10,7 @@ import { LabelTag } from "@rsva/ui/components/color-chip";
 import { KeyHint } from "@rsva/ui/components/kbd";
 import { PriorityIcon } from "@rsva/ui/components/priority-icon";
 import { Hint } from "@rsva/ui/components/tooltip";
-import { UserAvatar } from "@rsva/ui/components/user-avatar";
+import { NoAvatar, UserAvatar } from "@rsva/ui/components/user-avatar";
 import { face } from "../lib/face.ts";
 import { cn } from "@rsva/ui/lib/utils";
 import { observer } from "mobx-react-lite";
@@ -113,6 +113,7 @@ export const AssigneesProperty = observer(function AssigneesProperty({ issue, cl
         compact,
         <KeyHint label="Assignees" keys="A" />,
         <Button variant="ghost" className={cn(triggerClass, multiClass, "gap-y-1", className)}>
+          {chosen.length === 0 && compact && <NoAvatar className="size-4" />}
           {chosen.length === 0 && <span className={placeholderClass}>No assignees</span>}
           {chosen.map((u) => (
             <span key={u.id} className="flex min-w-0 items-center gap-1.5">
@@ -277,16 +278,15 @@ type Asked = "cycle" | "startDate" | "dueDate" | "parent";
 
 /**
  * The properties as chips under the title, for an issue beside its list (the IssuePropsChips artboard): the page gets the
- * pane's width, and a chip opens the picker the panel does. What is empty waits behind + Property, and shows as a chip
- * for as long as its picker is open, so that the picker has something to stand on.
+ * pane's width, and a chip opens the picker the panel does. State, priority and assignees are always there, set or not:
+ * a new issue asks for them first. What else is empty waits behind + Property, and shows as a chip for as long as its
+ * picker is open, so that the picker has something to stand on.
  */
 export const PropertyChips = observer(function PropertyChips({ issue }: { issue: Issue }) {
   const [asked, setAsked] = useState<Asked | null>(null);
   const picking = listView.picker;
   const control = (what: Asked) => ({ open: asked === what, onOpenChange: (open: boolean) => setAsked(open ? what : null) });
   const has = {
-    priority: issue.priority !== 0 || picking === "priority",
-    assignees: issue.assigneeIds.length > 0 || picking === "assignees",
     labels: issue.labelIds.length > 0 || picking === "labels",
     cycle: !!issue.cycleId || asked === "cycle",
     start: !!issue.startDate || asked === "startDate",
@@ -294,8 +294,6 @@ export const PropertyChips = observer(function PropertyChips({ issue }: { issue:
     parent: !!liveParent(issue) || asked === "parent",
   };
   const rows: { label: string; shortcut?: string; shown: boolean; open: () => void }[] = [
-    { label: "Priority", shortcut: "P", shown: has.priority, open: () => listView.setPicker("priority") },
-    { label: "Assignees", shortcut: "A", shown: has.assignees, open: () => listView.setPicker("assignees") },
     { label: "Labels", shortcut: "L", shown: has.labels, open: () => listView.setPicker("labels") },
     { label: "Cycle", shown: has.cycle, open: () => setAsked("cycle") },
     { label: "Start date", shown: has.start, open: () => setAsked("startDate") },
@@ -307,8 +305,8 @@ export const PropertyChips = observer(function PropertyChips({ issue }: { issue:
   return (
     <div role="toolbar" aria-label="Properties" data-roving="row" data-region-entry className="mt-1.5 flex flex-wrap items-center gap-1.5">
       <StateProperty issue={issue} className={chipClass} compact />
-      {has.priority && <PriorityProperty issue={issue} className={chipClass} compact />}
-      {has.assignees && <AssigneesProperty issue={issue} className={chipClass} compact />}
+      <PriorityProperty issue={issue} className={chipClass} compact />
+      <AssigneesProperty issue={issue} className={chipClass} compact />
       {issue.delegateId && <DelegateChip issue={issue} className={cn(chipShape, "gap-[5px] font-mono text-[11px]")} compact />}
       {has.labels && <LabelsProperty issue={issue} className={cn(chipClass, "gap-2.5 [&_[data-slot=label-tag]]:h-auto [&_[data-slot=label-tag]]:border-0 [&_[data-slot=label-tag]]:px-0")} compact />}
       {has.cycle && <CycleProperty issue={issue} className={chipClass} compact {...control("cycle")} />}
